@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Miles Agent — Consultor de Milhas</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈️</text></svg>">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0c0a1a; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
+  select, input, button { font-family: inherit; }
+  select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2394a3b8' d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; padding-right: 24px !important; }
+  input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); }
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2d2a3e; border-radius: 2px; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useCallback, useMemo } = React;
+
+
+// ── Programs ──────────────────────────────────────────────────────────────
+const PROGRAMS = {
+  latam: { name: "LATAM Pass", short: "LATAM", color: "#e11d48", type: "Tabela Fixa", emissao: "Call Center 4002-5700" },
+  smiles: { name: "Smiles", short: "Smiles", color: "#f97316", type: "Dinâmico", emissao: "smiles.com.br" },
+  azul: { name: "Azul Fidelidade", short: "Azul", color: "#2563eb", type: "Dinâmico", emissao: "azul.com.br" },
+  tap: { name: "TAP Miles&Go", short: "TAP", color: "#059669", type: "Tabela Fixa", emissao: "flytap.com" },
+};
+
+// ── LATAM fixed table per region per cabin (per leg) ──────────────────────
+const LATAM_TABLE = {
+  "América do Sul": { Y: 24000, W: 43200, J: 48000, F: 84000 },
+  "EUA":            { Y: 42000, W: 43200, J: 90000, F: 144000 },
+  "Caribe":         { Y: 42000, W: 43200, J: 90000, F: 144000 },
+  "Europa":         { Y: 62000, W: 137500, J: 157500, F: 270000 },
+  "África":         { Y: 57000, W: 75600, J: 135000, F: 216000 },
+  "Ásia":           { Y: 95000, W: 114000, J: 198000, F: 252000 },
+  "Oceania":        { Y: 125500, W: 214000, J: 248000, F: 317000 },
+};
+
+const CABINS = [
+  { id: "Y", label: "Econômica", short: "Econ", aa: "ECONOMY" },
+  { id: "W", label: "Premium Economy", short: "Prem", aa: "PREMIUM_ECONOMY" },
+  { id: "J", label: "Executiva", short: "Exec", aa: "BUSINESS" },
+  { id: "F", label: "Primeira", short: "1ª", aa: "FIRST" },
+];
+
+// ── Origins ───────────────────────────────────────────────────────────────
+const ORIGINS = [
+  { code: "GRU", city: "São Paulo (Guarulhos)", short: "GRU" },
+  { code: "CGH", city: "São Paulo (Congonhas)", short: "CGH" },
+  { code: "VCP", city: "Campinas (Viracopos)", short: "VCP" },
+  { code: "GIG", city: "Rio de Janeiro (Galeão)", short: "GIG" },
+];
+
+// ── Destinations ──────────────────────────────────────────────────────────
+// options use cabin "J" as base; we'll scale dynamically
+const DESTS = [
+  // EUROPA
+  { code: "MAD", city: "Madri", flag: "🇪🇸", region: "Europa", options: [
+    { program: "latam", partner: "Iberia", route: "{O}→MAD direto", search: "aa.com", bestPick: true, surcharge: "Baixo ~US$80" },
+    { program: "tap", partner: "Turkish/Copa", route: "{O}→PTY/IST→MAD", search: "flytap.com", surcharge: "Baixo", note: "Conexão longa", fixedMilesJ: 120000 },
+    { program: "smiles", partner: "Air France", route: "{O}→CDG→MAD", search: "smiles.com.br", fixedMilesJ: 310000, dynMultiplier: true },
+  ]},
+  { code: "LIS", city: "Lisboa", flag: "🇵🇹", region: "Europa", options: [
+    { program: "tap", partner: "TAP direto", route: "{O}→LIS direto", search: "flytap.com", bestPick: true, surcharge: "Médio ~US$150", fixedMilesJ: 120000 },
+    { program: "latam", partner: "Iberia", route: "{O}→MAD→LIS", search: "aa.com", surcharge: "Baixo" },
+    { program: "azul", partner: "Azul direto", route: "VCP→LIS direto", search: "azul.com.br", dynamic: true, note: "Dinâmico ~80-250k" },
+    { program: "smiles", partner: "Air France", route: "{O}→CDG→LIS", search: "smiles.com.br", fixedMilesJ: 312500, dynMultiplier: true },
+  ]},
+  { code: "LHR", city: "Londres", flag: "🇬🇧", region: "Europa", options: [
+    { program: "latam", partner: "Iberia+BA", route: "{O}→MAD→LHR", search: "aa.com", bestPick: true, surcharge: "Médio (via MAD)" },
+    { program: "latam", partner: "British Airways", route: "{O}→LHR direto", search: "aa.com", surcharge: "ALTO ~US$500", note: "BA fuel surcharge" },
+    { program: "tap", partner: "TAP/Turkish", route: "{O}→LIS→LHR", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 120000 },
+    { program: "smiles", partner: "Air France/KLM", route: "{O}→CDG→LHR", search: "smiles.com.br", fixedMilesJ: 320000, dynMultiplier: true },
+  ]},
+  { code: "CDG", city: "Paris", flag: "🇫🇷", region: "Europa", options: [
+    { program: "latam", partner: "Iberia", route: "{O}→MAD→CDG", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "tap", partner: "TAP", route: "{O}→LIS→CDG", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 120000 },
+    { program: "smiles", partner: "Air France direto", route: "{O}→CDG direto", search: "smiles.com.br", fixedMilesJ: 312500, dynMultiplier: true, note: "Voo direto" },
+  ]},
+  { code: "FCO", city: "Roma", flag: "🇮🇹", region: "Europa", options: [
+    { program: "latam", partner: "Iberia", route: "{O}→MAD→FCO", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "tap", partner: "TAP/Turkish", route: "{O}→LIS→FCO", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 120000 },
+    { program: "smiles", partner: "Air France/KLM", route: "{O}→CDG→FCO", search: "smiles.com.br", fixedMilesJ: 315000, dynMultiplier: true },
+  ]},
+  { code: "BCN", city: "Barcelona", flag: "🇪🇸", region: "Europa", options: [
+    { program: "latam", partner: "Iberia", route: "{O}→MAD→BCN", search: "aa.com", bestPick: true, surcharge: "Baixo", note: "Ponte aérea MAD-BCN" },
+    { program: "tap", partner: "TAP", route: "{O}→LIS→BCN", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 120000 },
+  ]},
+  { code: "AMS", city: "Amsterdã", flag: "🇳🇱", region: "Europa", options: [
+    { program: "latam", partner: "Iberia", route: "{O}→MAD→AMS", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "smiles", partner: "KLM direto", route: "{O}→AMS direto", search: "smiles.com.br", fixedMilesJ: 324700, dynMultiplier: true, note: "Voo direto KLM" },
+    { program: "tap", partner: "TAP", route: "{O}→LIS→AMS", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 120000 },
+  ]},
+  { code: "FRA", city: "Frankfurt", flag: "🇩🇪", region: "Europa", options: [
+    { program: "latam", partner: "Iberia", route: "{O}→MAD→FRA", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "tap", partner: "Turkish/Lufthansa", route: "{O}→IST→FRA", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 120000 },
+  ]},
+  // AMÉRICA DO SUL
+  { code: "SCL", city: "Santiago", flag: "🇨🇱", region: "América do Sul", options: [
+    { program: "smiles", partner: "GOL direto", route: "{O}→SCL", search: "smiles.com.br", bestPick: true, fixedMilesJ: 27000, dynMultiplier: true, note: "Dinâmico ~20-35k" },
+    { program: "latam", partner: "Aerolíneas Arg.", route: "{O}→EZE→SCL", search: "aa.com", surcharge: "Baixo" },
+  ]},
+  { code: "LIM", city: "Lima", flag: "🇵🇪", region: "América do Sul", options: [
+    { program: "smiles", partner: "GOL direto", route: "{O}→LIM", search: "smiles.com.br", bestPick: true, fixedMilesJ: 25000, dynMultiplier: true, note: "Dinâmico ~20-30k" },
+    { program: "latam", partner: "Aerolíneas/Avianca", route: "{O}→EZE/BOG→LIM", search: "aa.com", surcharge: "Baixo" },
+  ]},
+  { code: "BOG", city: "Bogotá", flag: "🇨🇴", region: "América do Sul", options: [
+    { program: "smiles", partner: "GOL/Avianca", route: "{O}→BOG", search: "smiles.com.br", bestPick: true, fixedMilesJ: 30000, dynMultiplier: true, note: "Dinâmico ~25-40k" },
+    { program: "latam", partner: "Avianca", route: "{O}→BOG", search: "aa.com", surcharge: "Baixo" },
+  ]},
+  // ÁFRICA
+  { code: "JNB", city: "Joanesburgo", flag: "🇿🇦", region: "África", options: [
+    { program: "latam", partner: "Qatar Airways", route: "{O}→DOH→JNB", search: "aa.com", bestPick: true, surcharge: "Baixo", note: "QSuites, conexão longa" },
+    { program: "latam", partner: "British Airways", route: "{O}→LHR→JNB", search: "aa.com", surcharge: "ALTO (BA)" },
+  ]},
+  { code: "CPT", city: "Cidade do Cabo", flag: "🇿🇦", region: "África", options: [
+    { program: "latam", partner: "Qatar+BA", route: "{O}→DOH→JNB→CPT", search: "aa.com", bestPick: true, surcharge: "Baixo", note: "Verificar JNB-CPT incluso" },
+  ]},
+  // CARIBE
+  { code: "CUN", city: "Cancún", flag: "🇲🇽", region: "Caribe", options: [
+    { program: "latam", partner: "Aeromexico", route: "{O}→MEX→CUN", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "smiles", partner: "GOL/Copa", route: "{O}→CUN", search: "smiles.com.br", fixedMilesJ: 80000, dynMultiplier: true, note: "Dinâmico ~60-120k" },
+  ]},
+  { code: "CTG", city: "Cartagena", flag: "🇨🇴", region: "Caribe", options: [
+    { program: "smiles", partner: "Avianca/GOL", route: "{O}→BOG→CTG", search: "smiles.com.br", bestPick: true, fixedMilesJ: 40000, dynMultiplier: true, note: "Dinâmico ~30-60k" },
+    { program: "latam", partner: "Avianca", route: "{O}→BOG→CTG", search: "aa.com", surcharge: "Baixo" },
+  ]},
+  { code: "PUJ", city: "Punta Cana", flag: "🇩🇴", region: "Caribe", options: [
+    { program: "smiles", partner: "GOL/Copa", route: "{O}→PUJ", search: "smiles.com.br", bestPick: true, fixedMilesJ: 70000, dynMultiplier: true, note: "Dinâmico ~50-100k" },
+    { program: "latam", partner: "Delta", route: "{O}→ATL→PUJ", search: "aa.com", surcharge: "Baixo" },
+  ]},
+  // EUA
+  { code: "MIA", city: "Miami", flag: "🇺🇸", region: "EUA", options: [
+    { program: "latam", partner: "Delta", route: "{O}→MIA", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "smiles", partner: "GOL/Delta", route: "{O}→MIA", search: "smiles.com.br", fixedMilesJ: 150000, dynMultiplier: true },
+    { program: "azul", partner: "Azul", route: "VCP→FLL", search: "azul.com.br", dynamic: true, note: "Fort Lauderdale ~80-200k" },
+    { program: "tap", partner: "TAP/United", route: "{O}→LIS→MIA", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 95000 },
+  ]},
+  { code: "JFK", city: "Nova York", flag: "🇺🇸", region: "EUA", options: [
+    { program: "latam", partner: "Delta", route: "{O}→JFK ou via ATL", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "tap", partner: "TAP/United", route: "{O}→LIS→JFK", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 95000 },
+    { program: "smiles", partner: "Delta", route: "{O}→ATL→JFK", search: "smiles.com.br", fixedMilesJ: 160000, dynMultiplier: true },
+  ]},
+  { code: "LAX", city: "Los Angeles", flag: "🇺🇸", region: "EUA", options: [
+    { program: "latam", partner: "Delta", route: "{O}→ATL→LAX", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "tap", partner: "TAP/United", route: "{O}→LIS→LAX", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 95000 },
+    { program: "smiles", partner: "Delta", route: "{O}→ATL→LAX", search: "smiles.com.br", fixedMilesJ: 170000, dynMultiplier: true },
+  ]},
+  { code: "SFO", city: "San Francisco", flag: "🇺🇸", region: "EUA", options: [
+    { program: "latam", partner: "Delta", route: "{O}→ATL→SFO", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "tap", partner: "TAP/United", route: "{O}→LIS→SFO", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 95000 },
+    { program: "smiles", partner: "Delta", route: "{O}→ATL→SFO", search: "smiles.com.br", fixedMilesJ: 170000, dynMultiplier: true },
+  ]},
+  // ÁSIA
+  { code: "NRT", city: "Tóquio", flag: "🇯🇵", region: "Ásia", options: [
+    { program: "latam", partner: "Japan Airlines", route: "{O}→DOH→NRT", search: "aa.com", bestPick: true, surcharge: "Baixo", note: "Qatar+JAL" },
+  ]},
+  { code: "BKK", city: "Bangkok", flag: "🇹🇭", region: "Ásia", options: [
+    { program: "latam", partner: "Qatar Airways", route: "{O}→DOH→BKK", search: "aa.com", bestPick: true, surcharge: "Baixo", note: "QSuites" },
+  ]},
+  { code: "SIN", city: "Singapura", flag: "🇸🇬", region: "Ásia", options: [
+    { program: "latam", partner: "Qatar Airways", route: "{O}→DOH→SIN", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+  ]},
+  // OCEANIA
+  { code: "SYD", city: "Sydney", flag: "🇦🇺", region: "Oceania", options: [
+    { program: "latam", partner: "Qantas", route: "{O}→DOH→SYD", search: "aa.com", bestPick: true, surcharge: "Médio", note: "Só c/ bônus forte" },
+  ]},
+];
+
+const REGION_COLORS = { "Europa": "#818cf8", "América do Sul": "#4ade80", "África": "#fbbf24", "Caribe": "#f472b6", "EUA": "#60a5fa", "Ásia": "#c084fc", "Oceania": "#2dd4bf" };
+const IUPP = 1390000;
+function fmt(n) { return n.toLocaleString("pt-BR"); }
+function iuppCost(m, b) { return Math.ceil(m / (1 + b / 100)); }
+
+// Cabin multipliers for Smiles/TAP (approx ratio vs J)
+const CABIN_MULT = { Y: 0.35, W: 0.65, J: 1, F: 1.5 };
+
+function getMiles(opt, cabin, region) {
+  if (opt.program === "latam" && !opt.fixedMilesJ) {
+    const tbl = LATAM_TABLE[region];
+    return tbl ? tbl[cabin] : null;
+  }
+  if (opt.fixedMilesJ) {
+    return Math.round(opt.fixedMilesJ * CABIN_MULT[cabin]);
+  }
+  return null;
+}
+
+// ── Build search URLs with pre-filled data ────────────────────────────────
+function buildSearchUrl(site, origin, destCode, date, cabinId, paxCount) {
+  const cabinAA = { Y: "ECONOMY", W: "PREMIUM_ECONOMY", J: "BUSINESS", F: "FIRST" }[cabinId] || "BUSINESS";
+  const cabinSmiles = { Y: "ECONOMIC", W: "PREMIUM_ECONOMY", J: "BUSINESS", F: "FIRST" }[cabinId] || "BUSINESS";
+
+  switch (site) {
+    case "aa.com":
+      return `https://www.aa.com/booking/find-flights?tripType=oneWay&searchType=Award&bookingType=award&locale=en_US&pax=${paxCount}&adult=${paxCount}&type=1&origin=${origin}&destination=${destCode}&departDate=${date}&cabin=${cabinAA}`;
+    case "smiles.com.br":
+      return `https://www.smiles.com.br/mfe/emissao-passagem/?adults=${paxCount}&cabin=${cabinSmiles}&children=0&departureDate=${date.replace(/-/g, "")}&infants=0&isFlexibleDateChecked=false&isRoundTrip=false&originAirport=${origin}&destinationAirport=${destCode}&tripType=1`;
+    case "azul.com.br":
+      return `https://www.voeazul.com.br/br/pt/home/selecao-voo?c[0].ds=${origin}&c[0].as=${destCode}&c[0].dt=${date}&p[0].t=ADT&p[0].c=${paxCount}&f.ct=${cabinSmiles === "BUSINESS" ? "Executive" : "Economic"}&cc=PTS`;
+    case "flytap.com":
+      return `https://www.flytap.com/en/booking?type=ow&from=${origin}&to=${destCode}&out=${date}&adt=${paxCount}&cls=${cabinId === "J" ? "C" : cabinId === "F" ? "F" : "Y"}&redemption=true`;
+    case "delta.com":
+      return `https://www.delta.com/flight-search/search?action=findFlights&tripType=ONE_WAY&from=${origin}&to=${destCode}&departureDate=${date}&paxCount=${paxCount}&cabin=${cabinAA}&awardTravel=true`;
+    default:
+      return `https://www.google.com/travel/flights?q=flights+${origin}+to+${destCode}+${date}`;
+  }
+}
+
+// ── Availability sim — now per partner ─────────────────────────────────────
+function simAvail(destObj, from, to) {
+  const results = [], s = new Date(from), e = new Date(to);
+  const partners = destObj.options.map(o => ({ partner: o.partner, program: o.program, search: o.search }));
+  // Unique partners only (some dests have 2 LATAM options e.g. LHR)
+  const uniq = [];
+  const seen = new Set();
+  for (const p of partners) {
+    const k = p.partner;
+    if (!seen.has(k)) { seen.add(k); uniq.push(p); }
+  }
+
+  for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+    const dayPartners = [];
+    let bestEx = 0, bestEc = 0;
+
+    for (let pi = 0; pi < uniq.length; pi++) {
+      const p = uniq[pi];
+      const seed = destObj.code.charCodeAt(0) + destObj.code.charCodeAt(1) + destObj.code.charCodeAt(2) + pi * 37;
+      const h = (d.getDate() * 31 + d.getMonth() * 7 + seed + pi * 13) % 100;
+      const we = d.getDay() === 0 || d.getDay() === 5 || d.getDay() === 6;
+      const hi = d.getMonth() >= 5 && d.getMonth() <= 7;
+      let ex = 0, ec = 0;
+      if (h < (hi ? 25 : 45)) ex = we ? (h < 10 ? 1 : 0) : (h < 15 ? 2 : 1);
+      if (h < 70) ec = Math.min(4, Math.floor(h / 15) + 1);
+      if (ex > 0 || ec > 0) {
+        dayPartners.push({ ...p, ex, ec });
+        bestEx = Math.max(bestEx, ex);
+        bestEc = Math.max(bestEc, ec);
+      }
+    }
+    if (dayPartners.length > 0) {
+      results.push({ date: new Date(d), ds: d.toISOString().split("T")[0], partners: dayPartners, ex: bestEx, ec: bestEc });
+    }
+  }
+  return results;
+}
+
+// ── Components ────────────────────────────────────────────────────────────
+function Pill({ program, tiny }) {
+  const p = PROGRAMS[program];
+  return <span style={{ display: "inline-flex", padding: tiny ? "0 4px" : "1px 6px", borderRadius: 3, fontSize: tiny ? 8 : 9, fontWeight: 700, background: p.color + "20", color: p.color, border: `1px solid ${p.color}40`, lineHeight: "16px" }}>{p.short}</span>;
+}
+
+// ── App ───────────────────────────────────────────────────────────────────
+function App() {
+  const [origin, setOrigin] = useState("GRU");
+  const [destCode, setDestCode] = useState("");
+  const [cabin, setCabin] = useState("J");
+  const [pax, setPax] = useState(2);
+  const [targetDate, setTargetDate] = useState("2026-07-20");
+  const [range, setRange] = useState(15);
+  const [bonus, setBonus] = useState(80);
+  const [res, setRes] = useState(null);
+  const [selDate, setSelDate] = useState(null);
+  const [searching, setSearching] = useState(false);
+  const [tab, setTab] = useState("search");
+  const [saved, setSaved] = useState([]);
+  const [regionFilter, setRegionFilter] = useState("");
+
+  // Compute date window from target + range
+  const df = useMemo(() => {
+    if (range === 0) return targetDate;
+    const d = new Date(targetDate + "T12:00:00");
+    d.setDate(d.getDate() - range);
+    return d.toISOString().split("T")[0];
+  }, [targetDate, range]);
+  const dt = useMemo(() => {
+    if (range === 0) return targetDate;
+    const d = new Date(targetDate + "T12:00:00");
+    d.setDate(d.getDate() + range);
+    return d.toISOString().split("T")[0];
+  }, [targetDate, range]);
+  const rangeLabel = range === 0 ? "Dia exato" : `±${range} dias (${range * 2} dias)`;
+
+  const dest = useMemo(() => DESTS.find(d => d.code === destCode), [destCode]);
+  const regions = useMemo(() => [...new Set(DESTS.map(d => d.region))], []);
+  const filteredDests = useMemo(() => regionFilter ? DESTS.filter(d => d.region === regionFilter) : DESTS, [regionFilter]);
+
+  // Add all destinations as possible origins for return legs
+  const allOrigins = useMemo(() => {
+    const extra = DESTS.map(d => ({ code: d.code, city: `${d.city} (${d.code})`, short: d.code }));
+    return [...ORIGINS, ...extra.filter(e => !ORIGINS.find(o => o.code === e.code))];
+  }, []);
+
+  const doSearch = useCallback(() => {
+    if (!dest) return;
+    setSearching(true); setRes(null); setSelDate(null);
+    setTimeout(() => { setRes(simAvail(dest, df, dt)); setSearching(false); }, 800);
+  }, [dest, df, dt, range]);
+
+  const sorted = useMemo(() => {
+    if (!dest) return [];
+    return [...dest.options].map(o => {
+      const m = getMiles(o, cabin, dest.region);
+      return { ...o, miles: m };
+    }).sort((a, b) => {
+      if (a.bestPick && !b.bestPick) return -1;
+      if (!a.bestPick && b.bestPick) return 1;
+      if (a.miles && b.miles) return a.miles - b.miles;
+      return a.miles ? -1 : 1;
+    });
+  }, [dest, cabin]);
+
+  const goodDates = res ? res.filter(r => r.ex >= pax) : [];
+  const cabinLabel = CABINS.find(c => c.id === cabin)?.label || "Executiva";
+
+  const S = {
+    input: { width: "100%", padding: "8px 6px", borderRadius: 6, border: "1.5px solid #2d2a3e", background: "#12102a", color: "#e2e8f0", fontSize: 12, boxSizing: "border-box", appearance: "none", WebkitAppearance: "none" },
+    label: { fontSize: 9, color: "#94a3b8", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8, display: "block", marginBottom: 3 },
+    card: { padding: 10, borderRadius: 8, background: "#12102a", border: "1px solid #2d2a3e" },
+    mono: { fontFamily: "'Space Mono', monospace" },
+  };
+
+  function SearchLink({ site, label, color, date }) {
+    const d = date || df;
+    const url = buildSearchUrl(site, origin, destCode, d, cabin, pax);
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer" style={{
+        padding: "7px 10px", borderRadius: 5, background: color, color: "#fff",
+        fontSize: 10, fontWeight: 600, textDecoration: "none", textAlign: "center", flex: 1,
+      }}>{label}</a>
+    );
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: "linear-gradient(155deg, #0c0a1a 0%, #11102a 40%, #090818 100%)", color: "#e2e8f0", fontFamily: "'DM Sans', sans-serif", padding: "14px 12px" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+
+      {/* Header */}
+      <div style={{ textAlign: "center", marginBottom: 14 }}>
+        <div style={{ fontSize: 9, ...S.mono, color: "#818cf8", letterSpacing: 3, textTransform: "uppercase" }}>Miles Agent</div>
+        <h1 style={{ fontSize: 17, fontWeight: 700, margin: "2px 0", background: "linear-gradient(135deg, #c7d2fe, #818cf8)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Consultor de Milhas</h1>
+        <div style={{ fontSize: 10, color: "#64748b" }}>
+          iupp: <strong style={{ color: "#4ade80" }}>{fmt(IUPP)}</strong> · {Object.values(PROGRAMS).map((p, i) => <span key={p.short}><span style={{ color: p.color, fontWeight: 600 }}>{p.short}</span>{i < 3 ? " · " : ""}</span>)}
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display: "flex", marginBottom: 12, borderRadius: 7, overflow: "hidden", border: "1px solid #2d2a3e" }}>
+        {[{ id: "search", l: "Buscar" }, { id: "compare", l: "Comparar" }, { id: "saved", l: `Salvos (${saved.length})` }].map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{
+            flex: 1, padding: "8px 0", fontSize: 10, fontWeight: 600, border: "none",
+            background: tab === t.id ? "#1e1b3a" : "#0c0a1a", color: tab === t.id ? "#818cf8" : "#64748b", cursor: "pointer",
+          }}>{t.l}</button>
+        ))}
+      </div>
+
+      {/* ═══ SEARCH ═══ */}
+      {tab === "search" && <>
+        {/* Origin & Destination dropdowns */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 8 }}>
+          <div>
+            <label style={S.label}>Origem</label>
+            <select value={origin} onChange={e => setOrigin(e.target.value)} style={S.input}>
+              <optgroup label="São Paulo">
+                {ORIGINS.filter(o => ["GRU","CGH","VCP"].includes(o.code)).map(o => <option key={o.code} value={o.code}>{o.short} — {o.city.split("(")[0].trim()}</option>)}
+              </optgroup>
+              <optgroup label="Outros BR">
+                {ORIGINS.filter(o => !["GRU","CGH","VCP"].includes(o.code)).map(o => <option key={o.code} value={o.code}>{o.short} — {o.city.split("(")[0].trim()}</option>)}
+              </optgroup>
+              <optgroup label="Internacionais (volta)">
+                {DESTS.map(d => <option key={d.code} value={d.code}>{d.flag} {d.code} — {d.city}</option>)}
+              </optgroup>
+            </select>
+          </div>
+          <div>
+            <label style={S.label}>Destino</label>
+            <select value={destCode} onChange={e => { setDestCode(e.target.value); setRes(null); setSelDate(null); }} style={{ ...S.input, color: destCode ? "#e2e8f0" : "#64748b" }}>
+              <option value="">Selecione...</option>
+              {regions.map(r => (
+                <optgroup key={r} label={r}>
+                  {DESTS.filter(d => d.region === r).map(d => (
+                    <option key={d.code} value={d.code}>{d.flag} {d.city} ({d.code})</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Cabin & Pax */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 8 }}>
+          <div>
+            <label style={S.label}>Classe</label>
+            <select value={cabin} onChange={e => setCabin(e.target.value)} style={S.input}>
+              {CABINS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={S.label}>Passageiros</label>
+            <div style={{ display: "flex", borderRadius: 6, overflow: "hidden", border: "1.5px solid #2d2a3e" }}>
+              {[1, 2, 3, 4].map(p => (
+                <button key={p} onClick={() => setPax(p)} style={{
+                  flex: 1, padding: "7px 0", fontSize: 11, fontWeight: 600, border: "none",
+                  background: pax === p ? "#1e1b3a" : "#0c0a1a", color: pax === p ? "#818cf8" : "#64748b", cursor: "pointer",
+                }}>{p}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Date, Range & Bonus */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, marginBottom: 6 }}>
+          <div>
+            <label style={S.label}>Data alvo</label>
+            <input type="date" value={targetDate} onChange={e => setTargetDate(e.target.value)} style={S.input} />
+          </div>
+          <div>
+            <label style={S.label}>Flexibilidade</label>
+            <select value={range} onChange={e => setRange(Number(e.target.value))} style={S.input}>
+              <option value={0}>Dia exato</option>
+              <option value={2}>±2 dias</option>
+              <option value={5}>±5 dias</option>
+              <option value={10}>±10 dias</option>
+              <option value={15}>±15 dias (~1 mês)</option>
+            </select>
+          </div>
+        </div>
+        {range > 0 && (
+          <div style={{ fontSize: 9, color: "#64748b", marginBottom: 8, textAlign: "center" }}>
+            Buscando de <strong style={{ color: "#94a3b8" }}>{new Date(df + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}</strong> a <strong style={{ color: "#94a3b8" }}>{new Date(dt + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}</strong> ({range * 2} dias)
+          </div>
+        )}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 5, marginBottom: 12 }}>
+          <div>
+            <label style={S.label}>Bônus iupp</label>
+            <select value={bonus} onChange={e => setBonus(Number(e.target.value))} style={S.input}>
+              {[0, 50, 80, 100].map(b => <option key={b} value={b}>{b === 0 ? "Sem bônus" : `${b}%`}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Options per program */}
+        {dest && <>
+          <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6, color: "#c7d2fe" }}>
+            {dest.flag} {origin}→{dest.city} · {cabinLabel} · i/v {pax}pax
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+            {sorted.map((o, i) => {
+              const p = PROGRAMS[o.program];
+              const rt = o.miles ? o.miles * 2 * pax : null;
+              const pts = rt ? iuppCost(rt, bonus) : null;
+              const rem = pts != null ? IUPP - pts : null;
+              const route = o.route.replace("{O}", origin);
+              return (
+                <div key={i} style={{ ...S.card, borderColor: o.bestPick ? p.color + "50" : "#2d2a3e", position: "relative" }}>
+                  {o.bestPick && <span style={{ position: "absolute", top: -7, right: 8, fontSize: 8, fontWeight: 700, padding: "0 6px", borderRadius: 3, background: "#052e16", color: "#4ade80", border: "1px solid #166534" }}>MELHOR</span>}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <Pill program={o.program} />
+                    <span style={{ fontSize: 9, color: "#64748b" }}>{p.type}</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 2 }}>
+                    <strong style={{ color: "#c7d2fe" }}>{o.partner}</strong> — {route}
+                  </div>
+                  {rt ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 3, marginTop: 6 }}>
+                      <div><div style={{ fontSize: 8, color: "#64748b", textTransform: "uppercase" }}>Milhas</div><div style={{ fontSize: 12, fontWeight: 700, ...S.mono }}>{fmt(rt)}</div></div>
+                      <div><div style={{ fontSize: 8, color: "#64748b", textTransform: "uppercase" }}>iupp ({bonus}%)</div><div style={{ fontSize: 12, fontWeight: 700, ...S.mono, color: "#818cf8" }}>{fmt(pts)}</div></div>
+                      <div><div style={{ fontSize: 8, color: "#64748b", textTransform: "uppercase" }}>Sobra</div><div style={{ fontSize: 12, fontWeight: 700, ...S.mono, color: rem >= 200000 ? "#4ade80" : rem >= 0 ? "#fbbf24" : "#f87171" }}>{fmt(rem)}</div></div>
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 6, fontSize: 11, color: "#fbbf24", fontStyle: "italic" }}>Preço dinâmico — verificar no site</div>
+                  )}
+                  {(o.surcharge || o.note) && (
+                    <div style={{ display: "flex", gap: 3, marginTop: 5, flexWrap: "wrap" }}>
+                      {o.surcharge && <span style={{ fontSize: 8, padding: "1px 5px", borderRadius: 3, background: o.surcharge.includes("ALTO") ? "#7f1d1d" : "#1e1b3a", color: o.surcharge.includes("ALTO") ? "#fca5a5" : "#94a3b8", border: "1px solid " + (o.surcharge.includes("ALTO") ? "#991b1b" : "#2d2a3e") }}>Taxa: {o.surcharge}</span>}
+                      {o.note && <span style={{ fontSize: 8, padding: "1px 5px", borderRadius: 3, background: "#1e1b3a", color: "#94a3b8", border: "1px solid #2d2a3e" }}>{o.note}</span>}
+                    </div>
+                  )}
+                  <div style={{ marginTop: 6 }}>
+                    <SearchLink site={o.search} label={`Buscar no ${o.search} →`} color={p.color} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>}
+
+        {/* Search availability */}
+        <button onClick={doSearch} disabled={!dest || searching} style={{
+          width: "100%", padding: 11, borderRadius: 8, border: "none",
+          background: dest ? "linear-gradient(135deg, #4f46e5, #7c3aed)" : "#2d2a3e",
+          color: dest ? "#fff" : "#64748b", fontSize: 12, fontWeight: 700,
+          cursor: dest ? "pointer" : "not-allowed", marginBottom: 14, opacity: searching ? 0.6 : 1,
+        }}>{searching ? "Buscando..." : range === 0 ? "Simular Disponibilidade (dia exato)" : `Simular Disponibilidade (${range * 2} dias)`}</button>
+
+        {/* Calendar */}
+        {res && <>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 600 }}>Calendário (melhor parceira/dia)</span>
+            <span style={{ fontSize: 9, color: goodDates.length > 0 ? "#4ade80" : "#f87171" }}>{goodDates.length} datas c/ {pax}+</span>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 4, fontSize: 8, color: "#94a3b8" }}>
+            {[["#052e16","#166534","2+ exec"],["#422006","#854d0e","1 exec"],["#1e1b3a","#3730a3","econ only"]].map(([bg,bd,l]) => (
+              <span key={l}><span style={{ display: "inline-block", width: 7, height: 7, borderRadius: 2, background: bg, border: `1px solid ${bd}`, marginRight: 2, verticalAlign: "middle" }} />{l}</span>
+            ))}
+            <span><span style={{ display: "inline-block", width: 7, height: 7, borderRadius: 2, background: "transparent", border: "1.5px solid #c084fc", marginRight: 2, verticalAlign: "middle" }} />alvo</span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 2, marginTop: 4 }}>
+            {(() => {
+              const days = [], s = new Date(df), e = new Date(dt), dm = {};
+              res.forEach(r => { dm[r.ds] = r; });
+              for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) days.push(new Date(d));
+              return days.map(day => {
+                const k = day.toISOString().split("T")[0], r = dm[k];
+                const isTarget = k === targetDate;
+                let bg = "#1e1b2e", bd = "#2d2a3e";
+                if (r?.ex >= 2) { bg = "#052e16"; bd = "#166534"; }
+                else if (r?.ex === 1) { bg = "#422006"; bd = "#854d0e"; }
+                else if (r?.ec > 0) { bg = "#1e1b3a"; bd = "#3730a3"; }
+                if (selDate === k) bd = "#e2e8f0";
+                else if (isTarget) bd = "#c084fc";
+                return (
+                  <button key={k} onClick={() => r && setSelDate(k)} style={{
+                    width: 34, height: 34, borderRadius: 5, fontSize: 10, fontWeight: 500,
+                    background: bg, border: `1.5px solid ${bd}`, color: "#e2e8f0",
+                    cursor: r ? "pointer" : "default", opacity: r ? 1 : 0.2,
+                    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                  }}>
+                    <span style={{ fontSize: 8, opacity: 0.5 }}>{day.toLocaleDateString("pt-BR", { weekday: "narrow" })}</span>
+                    <span>{day.getDate()}</span>
+                  </button>
+                );
+              });
+            })()}
+          </div>
+          {!selDate && res.length > 0 && (
+            <div style={{ marginTop: 8, fontSize: 9, color: "#64748b", textAlign: "center", fontStyle: "italic" }}>
+              Toque em uma data para ver disponibilidade por companhia aérea
+            </div>
+          )}
+
+          {selDate && (() => {
+            const r = res.find(x => x.ds === selDate);
+            if (!r) return null;
+            return (
+              <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: "#1e1b3a", border: "1px solid #2d2a3e" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
+                  {new Date(r.ds + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" })}
+                </div>
+
+                {/* Per-partner breakdown */}
+                <div style={{ fontSize: 9, color: "#94a3b8", marginBottom: 5, textTransform: "uppercase", fontWeight: 600, letterSpacing: 0.5 }}>Disponibilidade por companhia:</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 10 }}>
+                  {r.partners.map((p, pi) => {
+                    const progData = PROGRAMS[p.program];
+                    const hasEnough = p.ex >= pax;
+                    return (
+                      <div key={pi} style={{
+                        padding: 8, borderRadius: 6, background: "#12102a",
+                        border: `1px solid ${hasEnough ? "#166534" : "#2d2a3e"}`,
+                      }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                            <Pill program={p.program} tiny />
+                            <span style={{ fontSize: 11, fontWeight: 600, color: "#c7d2fe" }}>{p.partner}</span>
+                          </div>
+                          <div style={{ display: "flex", gap: 4 }}>
+                            <span style={{
+                              fontSize: 9, padding: "1px 6px", borderRadius: 3, fontWeight: 700,
+                              background: p.ex >= 2 ? "#052e16" : p.ex === 1 ? "#422006" : "#1e1b2e",
+                              color: p.ex >= 2 ? "#4ade80" : p.ex === 1 ? "#fbbf24" : "#64748b",
+                              border: `1px solid ${p.ex >= 2 ? "#166534" : p.ex === 1 ? "#854d0e" : "#2d2a3e"}`,
+                            }}>{p.ex}x exec</span>
+                            <span style={{
+                              fontSize: 9, padding: "1px 6px", borderRadius: 3, fontWeight: 600,
+                              background: "#1e1b3a", color: "#94a3b8", border: "1px solid #2d2a3e",
+                            }}>{p.ec}x econ</span>
+                          </div>
+                        </div>
+                        {hasEnough && (
+                          <div style={{ fontSize: 9, color: "#4ade80", marginBottom: 4 }}>✅ {pax} assentos em {cabin === "J" || cabin === "F" ? "executiva" : "econômica"}!</div>
+                        )}
+                        <a href={buildSearchUrl(p.search, origin, destCode, r.ds, cabin, pax)}
+                          target="_blank" rel="noopener noreferrer" style={{
+                            display: "block", padding: "5px 0", borderRadius: 4, textAlign: "center",
+                            background: progData.color, color: "#fff", fontSize: 9, fontWeight: 600,
+                            textDecoration: "none",
+                          }}>
+                          Verificar no {p.search} →
+                        </a>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button onClick={() => setSaved(p => [...p, { dest, origin, date: selDate, cabin, pax, bonus, id: Date.now() }])} style={{
+                  width: "100%", padding: "7px 10px", borderRadius: 5, border: "1px solid #2d2a3e",
+                  background: "#12102a", color: "#818cf8", fontSize: 10, fontWeight: 600, cursor: "pointer",
+                }}>💾 Salvar esta data</button>
+              </div>
+            );
+          })()}
+        </>}
+      </>}
+
+      {/* ═══ COMPARE ═══ */}
+      {tab === "compare" && <div>
+        <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4, color: "#c7d2fe" }}>{cabinLabel} i/v {pax}pax · Bônus {bonus}%</div>
+        <div style={{ display: "flex", gap: 3, marginBottom: 10, flexWrap: "wrap" }}>
+          <button onClick={() => setRegionFilter("")} style={{ padding: "3px 7px", borderRadius: 3, fontSize: 8, fontWeight: 600, border: "1px solid #2d2a3e", background: !regionFilter ? "#1e1b3a" : "#0c0a1a", color: !regionFilter ? "#e2e8f0" : "#64748b", cursor: "pointer" }}>Todos</button>
+          {regions.map(r => (
+            <button key={r} onClick={() => setRegionFilter(regionFilter === r ? "" : r)} style={{
+              padding: "3px 7px", borderRadius: 3, fontSize: 8, fontWeight: 600,
+              border: `1px solid ${regionFilter === r ? (REGION_COLORS[r] || "#818cf8") + "60" : "#2d2a3e"}`,
+              background: regionFilter === r ? (REGION_COLORS[r] || "#818cf8") + "15" : "#0c0a1a",
+              color: regionFilter === r ? REGION_COLORS[r] : "#64748b", cursor: "pointer",
+            }}>{r}</button>
+          ))}
+        </div>
+        {(regionFilter ? DESTS.filter(d => d.region === regionFilter) : DESTS)
+          .map(d => {
+            const opts = d.options.map(o => ({ ...o, miles: getMiles(o, cabin, d.region) })).filter(o => o.miles);
+            const best = opts.sort((a, b) => a.miles - b.miles)[0];
+            return best ? { d, best } : null;
+          }).filter(Boolean)
+          .sort((a, b) => iuppCost(a.best.miles * 2 * pax, bonus) - iuppCost(b.best.miles * 2 * pax, bonus))
+          .map(({ d, best }) => {
+            const cost = iuppCost(best.miles * 2 * pax, bonus);
+            const pct = Math.min(100, (cost / IUPP) * 100);
+            return (
+              <div key={d.code} onClick={() => { setDestCode(d.code); setTab("search"); setRes(null); }} style={{ ...S.card, marginBottom: 5, cursor: "pointer" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>{d.flag} {d.city}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    <Pill program={best.program} tiny />
+                    <span style={{ fontSize: 12, fontWeight: 700, ...S.mono, color: "#818cf8" }}>{fmt(cost)}</span>
+                  </div>
+                </div>
+                <div style={{ height: 3, borderRadius: 2, background: "#2d2a3e", overflow: "hidden" }}>
+                  <div style={{ width: `${pct}%`, height: "100%", borderRadius: 2, background: pct > 70 ? "#f87171" : pct > 40 ? "#fbbf24" : "#4ade80" }} />
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 2, fontSize: 8, color: "#64748b" }}>
+                  <span>{best.partner} · {fmt(best.miles * 2 * pax)} milhas</span>
+                  <span>{Math.round(pct)}% do saldo</span>
+                </div>
+              </div>
+            );
+          })}
+      </div>}
+
+      {/* ═══ SAVED ═══ */}
+      {tab === "saved" && <div>
+        {saved.length === 0 ? (
+          <div style={{ textAlign: "center", padding: 32, color: "#64748b", fontSize: 11 }}>Nenhuma busca salva.</div>
+        ) : saved.map(s => (
+          <div key={s.id} style={{ ...S.card, marginBottom: 5 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+              <span style={{ fontSize: 12, fontWeight: 700 }}>{s.dest.flag} {s.origin}→{s.dest.city}</span>
+              <span style={{ fontSize: 10, color: "#94a3b8" }}>{new Date(s.date + "T12:00:00").toLocaleDateString("pt-BR")}</span>
+            </div>
+            <div style={{ fontSize: 9, color: "#94a3b8", marginBottom: 6 }}>{CABINS.find(c => c.id === s.cabin)?.label} · {s.pax}pax · Bônus {s.bonus}%</div>
+            <div style={{ display: "flex", gap: 4 }}>
+              {["aa.com", "smiles.com.br", "flytap.com"].map(site => {
+                const url = buildSearchUrl(site, s.origin, s.dest.code, s.date, s.cabin, s.pax);
+                const colors = { "aa.com": "#e11d48", "smiles.com.br": "#f97316", "flytap.com": "#059669" };
+                const labels = { "aa.com": "AA", "smiles.com.br": "Smiles", "flytap.com": "TAP" };
+                return <a key={site} href={url} target="_blank" rel="noopener noreferrer" style={{ flex: 1, padding: 6, borderRadius: 5, background: colors[site], color: "#fff", fontSize: 9, fontWeight: 600, textAlign: "center", textDecoration: "none" }}>{labels[site]}</a>;
+              })}
+              <button onClick={() => setSaved(p => p.filter(x => x.id !== s.id))} style={{ padding: "6px 8px", borderRadius: 5, border: "1px solid #2d2a3e", background: "#12102a", color: "#f87171", fontSize: 9, cursor: "pointer" }}>✕</button>
+            </div>
+          </div>
+        ))}
+      </div>}
+
+      <div style={{ textAlign: "center", marginTop: 16, fontSize: 8, color: "#475569", lineHeight: 1.5 }}>
+        ⚠️ Disponibilidade simulada · Valores dinâmicos variam · Confirme no site antes de transferir
+      </div>
+    </div>
+  );
+}
+
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
