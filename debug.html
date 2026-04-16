@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Miles Agent — Debug</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0c0a1a; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
+  select, input, button { font-family: inherit; }
+  select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2394a3b8' d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; padding-right: 24px !important; }
+  input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); }
+  details summary { list-style: none; } details summary::-webkit-details-marker { display: none; }
+  ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #2d2a3e; border-radius: 2px; }
+  #error-display { color: #f87171; background: #1a0a0a; padding: 16px; font-family: monospace; font-size: 12px; white-space: pre-wrap; display: none; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+</head>
+<body>
+<div id="error-display"></div>
+<div id="root"></div>
+<script>
+window.onerror = function(msg, url, line, col, error) {
+  var el = document.getElementById('error-display');
+  el.style.display = 'block';
+  el.innerHTML += 'ERROR: ' + msg + '\nLine: ' + line + ' Col: ' + col + '\n\n';
+  if (error && error.stack) el.innerHTML += error.stack + '\n\n';
+  return false;
+};
+window.addEventListener('unhandledrejection', function(e) {
+  var el = document.getElementById('error-display');
+  el.style.display = 'block';
+  el.innerHTML += 'PROMISE ERROR: ' + e.reason + '\n\n';
+});
+</script>
+<script type="text/babel">
+const { useState, useCallback, useMemo, useEffect } = React;
+
+
+// ── Programs ──────────────────────────────────────────────────────────────
+const PROGRAMS = {
+  latam: { name: "LATAM Pass", short: "LATAM", color: "#e11d48", type: "Tabela Fixa", emissao: "Call Center 4002-5700" },
+  smiles: { name: "Smiles", short: "Smiles", color: "#f97316", type: "Dinâmico", emissao: "smiles.com.br" },
+  azul: { name: "Azul Fidelidade", short: "Azul", color: "#2563eb", type: "Dinâmico", emissao: "azul.com.br" },
+  tap: { name: "TAP Miles&Go", short: "TAP", color: "#059669", type: "Tabela Fixa", emissao: "flytap.com" },
+};
+
+const LATAM_TABLE = {
+  "América do Sul": { Y: 24000, W: 43200, J: 48000, F: 84000 },
+  "EUA": { Y: 42000, W: 43200, J: 90000, F: 144000 },
+  "Caribe": { Y: 42000, W: 43200, J: 90000, F: 144000 },
+  "Europa": { Y: 62000, W: 137500, J: 157500, F: 270000 },
+  "África": { Y: 57000, W: 75600, J: 135000, F: 216000 },
+  "Ásia": { Y: 95000, W: 114000, J: 198000, F: 252000 },
+  "Oceania": { Y: 125500, W: 214000, J: 248000, F: 317000 },
+};
+
+const CABINS = [
+  { id: "Y", label: "Econômica", short: "Econ" },
+  { id: "W", label: "Premium Economy", short: "Prem" },
+  { id: "J", label: "Executiva", short: "Exec" },
+  { id: "F", label: "Primeira", short: "1ª" },
+];
+
+const ORIGINS = [
+  { code: "GRU", city: "São Paulo (Guarulhos)" },
+  { code: "CGH", city: "São Paulo (Congonhas)" },
+  { code: "VCP", city: "Campinas (Viracopos)" },
+  { code: "GIG", city: "Rio de Janeiro (Galeão)" },
+];
+
+const DESTS = [
+  { code: "MAD", city: "Madri", flag: "🇪🇸", region: "Europa", options: [
+    { program: "latam", partner: "Iberia", route: "{O}→MAD direto", search: "aa.com", bestPick: true, surcharge: "Baixo ~US$80" },
+    { program: "tap", partner: "Turkish/Copa", route: "{O}→PTY/IST→MAD", search: "flytap.com", surcharge: "Baixo", note: "Conexão longa", fixedMilesJ: 120000 },
+    { program: "smiles", partner: "Air France", route: "{O}→CDG→MAD", search: "smiles.com.br", fixedMilesJ: 310000, dynMultiplier: true },
+  ]},
+  { code: "LIS", city: "Lisboa", flag: "🇵🇹", region: "Europa", options: [
+    { program: "tap", partner: "TAP direto", route: "{O}→LIS direto", search: "flytap.com", bestPick: true, surcharge: "Médio ~US$150", fixedMilesJ: 120000 },
+    { program: "latam", partner: "Iberia", route: "{O}→MAD→LIS", search: "aa.com", surcharge: "Baixo" },
+    { program: "azul", partner: "Azul direto", route: "VCP→LIS direto", search: "azul.com.br", dynamic: true, note: "Dinâmico ~80-250k" },
+    { program: "smiles", partner: "Air France", route: "{O}→CDG→LIS", search: "smiles.com.br", fixedMilesJ: 312500, dynMultiplier: true },
+  ]},
+  { code: "LHR", city: "Londres", flag: "🇬🇧", region: "Europa", options: [
+    { program: "latam", partner: "Iberia+BA", route: "{O}→MAD→LHR", search: "aa.com", bestPick: true, surcharge: "Médio (via MAD)" },
+    { program: "tap", partner: "TAP/Turkish", route: "{O}→LIS→LHR", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 120000 },
+    { program: "smiles", partner: "Air France/KLM", route: "{O}→CDG→LHR", search: "smiles.com.br", fixedMilesJ: 320000, dynMultiplier: true },
+  ]},
+  { code: "CDG", city: "Paris", flag: "🇫🇷", region: "Europa", options: [
+    { program: "latam", partner: "Iberia", route: "{O}→MAD→CDG", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "tap", partner: "TAP", route: "{O}→LIS→CDG", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 120000 },
+    { program: "smiles", partner: "Air France direto", route: "{O}→CDG direto", search: "smiles.com.br", fixedMilesJ: 312500, dynMultiplier: true, note: "Voo direto" },
+  ]},
+  { code: "FCO", city: "Roma", flag: "🇮🇹", region: "Europa", options: [
+    { program: "latam", partner: "Iberia", route: "{O}→MAD→FCO", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "tap", partner: "TAP/Turkish", route: "{O}→LIS→FCO", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 120000 },
+  ]},
+  { code: "BCN", city: "Barcelona", flag: "🇪🇸", region: "Europa", options: [
+    { program: "latam", partner: "Iberia", route: "{O}→MAD→BCN", search: "aa.com", bestPick: true, surcharge: "Baixo", note: "Ponte aérea MAD-BCN" },
+    { program: "tap", partner: "TAP", route: "{O}→LIS→BCN", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 120000 },
+  ]},
+  { code: "AMS", city: "Amsterdã", flag: "🇳🇱", region: "Europa", options: [
+    { program: "latam", partner: "Iberia", route: "{O}→MAD→AMS", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "smiles", partner: "KLM direto", route: "{O}→AMS direto", search: "smiles.com.br", fixedMilesJ: 324700, dynMultiplier: true, note: "Voo direto KLM" },
+  ]},
+  { code: "FRA", city: "Frankfurt", flag: "🇩🇪", region: "Europa", options: [
+    { program: "latam", partner: "Iberia", route: "{O}→MAD→FRA", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "tap", partner: "Turkish/Lufthansa", route: "{O}→IST→FRA", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 120000 },
+  ]},
+  { code: "SCL", city: "Santiago", flag: "🇨🇱", region: "América do Sul", options: [
+    { program: "smiles", partner: "GOL direto", route: "{O}→SCL", search: "smiles.com.br", bestPick: true, fixedMilesJ: 27000, dynMultiplier: true, note: "Dinâmico ~20-35k" },
+    { program: "latam", partner: "Aerolíneas Arg.", route: "{O}→EZE→SCL", search: "aa.com", surcharge: "Baixo" },
+  ]},
+  { code: "LIM", city: "Lima", flag: "🇵🇪", region: "América do Sul", options: [
+    { program: "smiles", partner: "GOL direto", route: "{O}→LIM", search: "smiles.com.br", bestPick: true, fixedMilesJ: 25000, dynMultiplier: true, note: "Dinâmico ~20-30k" },
+    { program: "latam", partner: "Aerolíneas/Avianca", route: "{O}→EZE/BOG→LIM", search: "aa.com", surcharge: "Baixo" },
+  ]},
+  { code: "BOG", city: "Bogotá", flag: "🇨🇴", region: "América do Sul", options: [
+    { program: "smiles", partner: "GOL/Avianca", route: "{O}→BOG", search: "smiles.com.br", bestPick: true, fixedMilesJ: 30000, dynMultiplier: true, note: "Dinâmico ~25-40k" },
+    { program: "latam", partner: "Avianca", route: "{O}→BOG", search: "aa.com", surcharge: "Baixo" },
+  ]},
+  { code: "JNB", city: "Joanesburgo", flag: "🇿🇦", region: "África", options: [
+    { program: "latam", partner: "Qatar Airways", route: "{O}→DOH→JNB", search: "aa.com", bestPick: true, surcharge: "Baixo", note: "QSuites" },
+  ]},
+  { code: "CPT", city: "Cidade do Cabo", flag: "🇿🇦", region: "África", options: [
+    { program: "latam", partner: "Qatar+BA", route: "{O}→DOH→JNB→CPT", search: "aa.com", bestPick: true, surcharge: "Baixo", note: "Verificar JNB-CPT" },
+  ]},
+  { code: "CUN", city: "Cancún", flag: "🇲🇽", region: "Caribe", options: [
+    { program: "latam", partner: "Aeromexico", route: "{O}→MEX→CUN", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "smiles", partner: "GOL/Copa", route: "{O}→CUN", search: "smiles.com.br", fixedMilesJ: 80000, dynMultiplier: true, note: "Dinâmico ~60-120k" },
+  ]},
+  { code: "CTG", city: "Cartagena", flag: "🇨🇴", region: "Caribe", options: [
+    { program: "smiles", partner: "Avianca/GOL", route: "{O}→BOG→CTG", search: "smiles.com.br", bestPick: true, fixedMilesJ: 40000, dynMultiplier: true },
+    { program: "latam", partner: "Avianca", route: "{O}→BOG→CTG", search: "aa.com", surcharge: "Baixo" },
+  ]},
+  { code: "PUJ", city: "Punta Cana", flag: "🇩🇴", region: "Caribe", options: [
+    { program: "smiles", partner: "GOL/Copa", route: "{O}→PUJ", search: "smiles.com.br", bestPick: true, fixedMilesJ: 70000, dynMultiplier: true },
+    { program: "latam", partner: "Delta", route: "{O}→ATL→PUJ", search: "aa.com", surcharge: "Baixo" },
+  ]},
+  { code: "MIA", city: "Miami", flag: "🇺🇸", region: "EUA", options: [
+    { program: "latam", partner: "Delta", route: "{O}→MIA", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "smiles", partner: "GOL/Delta", route: "{O}→MIA", search: "smiles.com.br", fixedMilesJ: 150000, dynMultiplier: true },
+    { program: "tap", partner: "TAP/United", route: "{O}→LIS→MIA", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 95000 },
+  ]},
+  { code: "JFK", city: "Nova York", flag: "🇺🇸", region: "EUA", options: [
+    { program: "latam", partner: "Delta", route: "{O}→JFK ou via ATL", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "tap", partner: "TAP/United", route: "{O}→LIS→JFK", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 95000 },
+  ]},
+  { code: "LAX", city: "Los Angeles", flag: "🇺🇸", region: "EUA", options: [
+    { program: "latam", partner: "Delta", route: "{O}→ATL→LAX", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "tap", partner: "TAP/United", route: "{O}→LIS→LAX", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 95000 },
+  ]},
+  { code: "SFO", city: "San Francisco", flag: "🇺🇸", region: "EUA", options: [
+    { program: "latam", partner: "Delta", route: "{O}→ATL→SFO", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+    { program: "tap", partner: "TAP/United", route: "{O}→LIS→SFO", search: "flytap.com", surcharge: "Baixo", fixedMilesJ: 95000 },
+  ]},
+  { code: "NRT", city: "Tóquio", flag: "🇯🇵", region: "Ásia", options: [
+    { program: "latam", partner: "Japan Airlines", route: "{O}→DOH→NRT", search: "aa.com", bestPick: true, surcharge: "Baixo", note: "Qatar+JAL" },
+  ]},
+  { code: "BKK", city: "Bangkok", flag: "🇹🇭", region: "Ásia", options: [
+    { program: "latam", partner: "Qatar Airways", route: "{O}→DOH→BKK", search: "aa.com", bestPick: true, surcharge: "Baixo", note: "QSuites" },
+  ]},
+  { code: "SIN", city: "Singapura", flag: "🇸🇬", region: "Ásia", options: [
+    { program: "latam", partner: "Qatar Airways", route: "{O}→DOH→SIN", search: "aa.com", bestPick: true, surcharge: "Baixo" },
+  ]},
+  { code: "SYD", city: "Sydney", flag: "🇦🇺", region: "Oceania", options: [
+    { program: "latam", partner: "Qantas", route: "{O}→DOH→SYD", search: "aa.com", bestPick: true, surcharge: "Médio", note: "Só c/ bônus forte" },
+  ]},
+];
+
+const REGION_COLORS = { "Europa": "#818cf8", "América do Sul": "#4ade80", "África": "#fbbf24", "Caribe": "#f472b6", "EUA": "#60a5fa", "Ásia": "#c084fc", "Oceania": "#2dd4bf" };
+const GITHUB_DATA_BASE = "https://danielsantos-r2.github.io/miles-agent/data";
+function fmt(n) { return n.toLocaleString("pt-BR"); }
+function iuppCost(m, b) { return Math.ceil(m / (1 + b / 100)); }
+const CABIN_MULT = { Y: 0.35, W: 0.65, J: 1, F: 1.5 };
+
+function getMiles(opt, cabin, region) {
+  if (opt.program === "latam" && !opt.fixedMilesJ) return LATAM_TABLE[region]?.[cabin] || null;
+  if (opt.fixedMilesJ) return Math.round(opt.fixedMilesJ * CABIN_MULT[cabin]);
+  return null;
+}
+
+function buildSearchUrl(site, origin, dest, date, cabinId, pax) {
+  const cAA = { Y: "ECONOMY", W: "PREMIUM_ECONOMY", J: "BUSINESS", F: "FIRST" }[cabinId] || "BUSINESS";
+  const cSm = { Y: "ECONOMIC", W: "PREMIUM_ECONOMY", J: "BUSINESS", F: "FIRST" }[cabinId] || "BUSINESS";
+  switch (site) {
+    case "aa.com": return `https://www.aa.com/booking/find-flights?tripType=oneWay&searchType=Award&bookingType=award&locale=en_US&pax=${pax}&adult=${pax}&type=1&origin=${origin}&destination=${dest}&departDate=${date}&cabin=${cAA}`;
+    case "smiles.com.br": return `https://www.smiles.com.br/mfe/emissao-passagem/?adults=${pax}&cabin=${cSm}&children=0&departureDate=${date.replace(/-/g,"")}&infants=0&isFlexibleDateChecked=false&isRoundTrip=false&originAirport=${origin}&destinationAirport=${dest}&tripType=1`;
+    case "flytap.com": return `https://www.flytap.com/en/booking?type=ow&from=${origin}&to=${dest}&out=${date}&adt=${pax}&cls=${cabinId==="J"?"C":cabinId==="F"?"F":"Y"}&redemption=true`;
+    case "azul.com.br": return `https://www.voeazul.com.br/br/pt/home/selecao-voo?c[0].ds=${origin}&c[0].as=${dest}&c[0].dt=${date}&p[0].t=ADT&p[0].c=${pax}&cc=PTS`;
+    default: return `https://www.google.com/travel/flights?q=flights+${origin}+to+${dest}+${date}`;
+  }
+}
+
+// ── Estimation engine ─────────────────────────────────────────────────────
+function estimateAvail(destObj, from, to) {
+  const r = [], s = new Date(from), e = new Date(to);
+  const partners = []; const seen = new Set();
+  for (const o of destObj.options) { if (!seen.has(o.partner)) { seen.add(o.partner); partners.push(o); } }
+  for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+    const dow = d.getDay(), month = d.getMonth(), isHigh = month >= 5 && month <= 7, isWe = dow === 0 || dow === 5 || dow === 6;
+    const daysOut = Math.floor((d - new Date()) / 86400000);
+    const dp = []; let best = 0;
+    for (const o of partners) {
+      let lk = 50;
+      if (o.partner.includes("Iberia")) { lk = daysOut > 300 ? 70 : daysOut > 200 ? 55 : daysOut > 60 ? 35 : 20; if (isHigh) lk -= 15; if (isWe) lk -= 10; }
+      else if (o.partner.includes("British")) { lk = daysOut > 300 ? 45 : daysOut > 200 ? 35 : 15; if (isHigh) lk -= 20; }
+      else if (o.partner.includes("Air France") || o.partner.includes("KLM")) { lk = daysOut > 250 ? 40 : daysOut > 100 ? 30 : 20; }
+      else if (o.partner.includes("TAP")) { lk = daysOut > 300 ? 60 : daysOut > 150 ? 45 : 25; }
+      else if (o.partner.includes("Qatar")) { lk = daysOut > 300 ? 50 : daysOut > 200 ? 40 : daysOut > 30 ? 20 : 35; }
+      else if (o.partner.includes("Delta")) { lk = daysOut > 300 ? 55 : daysOut > 150 ? 40 : 20; if (isHigh) lk -= 15; }
+      else if (o.partner.includes("GOL") || o.partner.includes("Copa")) { lk = 60; if (isHigh) lk -= 10; }
+      else if (o.partner.includes("Japan") || o.partner.includes("Qantas")) { lk = daysOut > 300 ? 40 : 15; }
+      if (dow >= 1 && dow <= 3) lk += 5;
+      lk = Math.max(5, Math.min(95, lk));
+      best = Math.max(best, lk);
+      dp.push({ partner: o.partner, program: o.program, search: o.search, route: o.route, surcharge: o.surcharge, note: o.note, likelihood: lk });
+    }
+    r.push({ date: new Date(d), ds: d.toISOString().split("T")[0], partners: dp, bestLikelihood: best, source: "estimate" });
+  }
+  return r;
+}
+
+// ── Normalize Cowork JSON to internal format ──────────────────────────────
+function normalizeCoworkData(raw) {
+  // Format 1: expected format { search: {}, results: [{ date, flights }] }
+  if (Array.isArray(raw?.results)) return raw;
+
+  // Format 2: Cowork actual output { searchQuery: {}, results: { "aa.com": { flights }, "ba.com": {} } }
+  const sq = raw?.searchQuery || raw?.search || {};
+  const searchedAt = sq.searchDate || sq.searched_at || new Date().toISOString().split("T")[0];
+  const allFlights = [];
+
+  // Collect flights from all sites
+  for (const [site, siteData] of Object.entries(raw?.results || {})) {
+    if (!siteData?.flights) continue;
+    for (const f of siteData.flights) {
+      // Extract operator — check segments for codeshare operator
+      let airline = "Unknown";
+      if (f.segments) {
+        const opSeg = f.segments.find(s => s.operator) || f.segments[0];
+        airline = opSeg?.operator || (opSeg?.flight?.startsWith("IB") ? "Iberia" : opSeg?.flight?.startsWith("AA") ? "American Airlines" : opSeg?.flight?.startsWith("BA") ? "British Airways" : opSeg?.flight?.startsWith("QR") ? "Qatar" : "AA");
+      }
+      allFlights.push({
+        source: site,
+        airline,
+        flight: f.segments?.map(s => s.flight).join(" + ") || "",
+        departure: f.departure || "",
+        arrival: f.arrival || "",
+        duration: f.duration || "",
+        stops: f.stops || 0,
+        via: f.via || "",
+        avios: f.avios || f.miles_aa || null,
+        seats_1pax: f.businessAvailable !== false,
+        seats_2pax: f.businessAvailable === true, // conservative: if available, assume at least for search pax
+        pricePaid: f.pricePaid || null,
+        isAward: !!f.avios || !!f.miles_aa,
+      });
+    }
+  }
+
+  // Build date-based results
+  const dateStr = sq.departDate || sq.date || "";
+  const calFares = {};
+  for (const [site, siteData] of Object.entries(raw?.results || {})) {
+    if (siteData?.calendarLowestFares) Object.assign(calFares, siteData.calendarLowestFares);
+  }
+
+  const results = [];
+  // Main search date
+  if (dateStr && allFlights.length > 0) {
+    results.push({ date: dateStr, flights: allFlights });
+  }
+  // Calendar dates (even if just fare data, useful for showing which dates have flights)
+  for (const [d, fare] of Object.entries(calFares)) {
+    if (d === dateStr) continue; // already added
+    results.push({ date: d, flights: [], calendarFare: fare, hasFlights: true });
+  }
+
+  return {
+    search: { searched_at: searchedAt, origin: sq.origin, destination: sq.destination, cabin: sq.cabin, pax: sq.passengers },
+    results,
+    calendarFares: calFares,
+    _normalized: true,
+  };
+}
+
+function mergeRealData(estimates, realData) {
+  const norm = normalizeCoworkData(realData);
+  if (!norm?.results?.length) return estimates;
+
+  const realMap = {};
+  for (const r of norm.results) { realMap[r.date] = r; }
+  const calFares = norm.calendarFares || {};
+
+  return estimates.map(est => {
+    const real = realMap[est.ds];
+    const fare = calFares[est.ds];
+
+    // If we have calendar fare data, this date has flights (even if no award detail)
+    if (!real && !fare) return est;
+
+    if (real && real.flights?.length > 0) {
+      const newPartners = est.partners.map(p => {
+        // Match by checking if any flight's airline matches the partner name
+        const matching = real.flights.filter(f => {
+          const pa = p.partner.toLowerCase();
+          const fa = (f.airline || "").toLowerCase();
+          return pa.includes(fa) || fa.includes(pa.split("/")[0].split("+")[0].trim());
+        });
+        if (matching.length > 0) {
+          const f = matching[0];
+          return { ...p, likelihood: f.seats_2pax ? 85 : f.seats_1pax ? 55 : 10, realStatus: "confirmed", realFlight: f };
+        }
+        // Check if any flight has Iberia as operator in segments
+        const iberiaMatch = real.flights.filter(f => f.airline === "Iberia" && p.partner.includes("Iberia"));
+        if (iberiaMatch.length > 0) {
+          const f = iberiaMatch[0];
+          return { ...p, likelihood: f.seats_2pax ? 85 : f.seats_1pax ? 55 : 10, realStatus: "confirmed", realFlight: f };
+        }
+        return { ...p, realStatus: "not_found" };
+      });
+      const bestLk = Math.max(...newPartners.map(p => p.likelihood));
+      return { ...est, partners: newPartners, bestLikelihood: bestLk, source: "real" };
+    }
+
+    // Calendar fare only — we know flights exist but no award detail
+    if (fare) {
+      return { ...est, source: "calendar", calendarFare: fare, bestLikelihood: Math.max(est.bestLikelihood, 40) };
+    }
+
+    return est;
+  });
+}
+
+function Pill({ program, tiny }) {
+  const p = PROGRAMS[program];
+  return <span style={{ display: "inline-flex", padding: tiny ? "0 4px" : "1px 6px", borderRadius: 3, fontSize: tiny ? 8 : 9, fontWeight: 700, background: p.color + "20", color: p.color, border: `1px solid ${p.color}40`, lineHeight: "16px" }}>{p.short}</span>;
+}
+
+function App() {
+  const [origin, setOrigin] = useState("GRU");
+  const [destCode, setDestCode] = useState("");
+  const [cabin, setCabin] = useState("J");
+  const [pax, setPax] = useState(2);
+  const [targetDate, setTargetDate] = useState("2026-07-20");
+  const [range, setRange] = useState(15);
+  const [bonus, setBonus] = useState(80);
+  const [res, setRes] = useState(null);
+  const [selDate, setSelDate] = useState(null);
+  const [searching, setSearching] = useState(false);
+  const [tab, setTab] = useState("search");
+  const [saved, setSaved] = useState([]);
+  const [regionFilter, setRegionFilter] = useState("");
+  const [realData, setRealData] = useState(null);
+  const [realDataMeta, setRealDataMeta] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  const df = useMemo(() => { if (range === 0) return targetDate; const d = new Date(targetDate + "T12:00:00"); d.setDate(d.getDate() - range); return d.toISOString().split("T")[0]; }, [targetDate, range]);
+  const dt = useMemo(() => { if (range === 0) return targetDate; const d = new Date(targetDate + "T12:00:00"); d.setDate(d.getDate() + range); return d.toISOString().split("T")[0]; }, [targetDate, range]);
+  const dest = useMemo(() => DESTS.find(d => d.code === destCode), [destCode]);
+  const regions = useMemo(() => [...new Set(DESTS.map(d => d.region))], []);
+  const cabinLabel = CABINS.find(c => c.id === cabin)?.label || "Executiva";
+
+  // Try to load real data from GitHub when dest changes
+  useEffect(() => {
+    if (!destCode) { setRealData(null); setRealDataMeta(null); return; }
+    const month = targetDate.substring(0, 7);
+    const url = `${GITHUB_DATA_BASE}/availability-${destCode}-${month}.json`;
+    fetch(url).then(r => { if (r.ok) return r.json(); throw new Error("not found"); })
+      .then(data => {
+        const searchedAt = data.search?.searched_at || data.searchQuery?.searchDate || "desconhecido";
+        setRealData(data);
+        setRealDataMeta({ loaded: true, searchedAt, url });
+      })
+      .catch(() => { setRealData(null); setRealDataMeta({ loaded: false }); });
+  }, [destCode, targetDate]);
+
+  const doSearch = useCallback(() => {
+    if (!dest) return;
+    setSearching(true); setRes(null); setSelDate(null);
+    setTimeout(() => {
+      let estimates = estimateAvail(dest, df, dt);
+      if (realData) estimates = mergeRealData(estimates, realData);
+      setRes(estimates);
+      setSearching(false);
+    }, 500);
+  }, [dest, df, dt, realData]);
+
+  const getOptions = useCallback((d) => {
+    if (!d) return [];
+    return [...d.options].map(o => ({ ...o, miles: getMiles(o, cabin, d.region) }))
+      .sort((a, b) => { if (a.bestPick && !b.bestPick) return -1; if (!a.bestPick && b.bestPick) return 1; if (a.miles && b.miles) return a.miles - b.miles; return a.miles ? -1 : 1; });
+  }, [cabin]);
+
+  // Generate Cowork command
+  const coworkCommand = useMemo(() => {
+    if (!dest) return "";
+    const cabinName = { Y: "Economy", W: "Premium Economy", J: "Business", F: "First" }[cabin];
+    return `Usando a skill de busca de disponibilidade award, buscar:\n- Origem: ${origin}\n- Destino: ${dest.city} (${dest.code})\n- Classe: ${cabinName}\n- Passageiros: ${pax}\n- Datas: ${df} a ${dt}\n- Sites: ba.com e aa.com\n- Salvar resultado como: availability-${destCode}-${targetDate.substring(0,7)}.json`;
+  }, [dest, origin, cabin, pax, df, dt, destCode, targetDate]);
+
+  const copyCoworkCommand = () => {
+    navigator.clipboard.writeText(coworkCommand).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }).catch(() => {});
+  };
+
+  const S = {
+    input: { width: "100%", padding: "8px 6px", borderRadius: 6, border: "1.5px solid #2d2a3e", background: "#12102a", color: "#e2e8f0", fontSize: 12, boxSizing: "border-box", appearance: "none", WebkitAppearance: "none" },
+    label: { fontSize: 9, color: "#94a3b8", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8, display: "block", marginBottom: 3 },
+    card: { padding: 10, borderRadius: 8, background: "#12102a", border: "1px solid #2d2a3e" },
+    mono: { fontFamily: "'Space Mono', monospace" },
+  };
+
+  const hasRealResults = res?.some(r => r.source === "real" || r.source === "calendar");
+
+  return (
+    <div style={{ minHeight: "100vh", background: "linear-gradient(155deg, #0c0a1a 0%, #11102a 40%, #090818 100%)", color: "#e2e8f0", fontFamily: "'DM Sans', sans-serif", padding: "14px 12px" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+
+      <div style={{ textAlign: "center", marginBottom: 14 }}>
+        <div style={{ fontSize: 9, ...S.mono, color: "#818cf8", letterSpacing: 3, textTransform: "uppercase" }}>Miles Agent</div>
+        <h1 style={{ fontSize: 17, fontWeight: 700, margin: "2px 0", background: "linear-gradient(135deg, #c7d2fe, #818cf8)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Consultor de Milhas</h1>
+        <div style={{ fontSize: 10, color: "#64748b" }}>{Object.values(PROGRAMS).map((p, i) => <span key={p.short}><span style={{ color: p.color, fontWeight: 600 }}>{p.short}</span>{i < 3 ? " · " : ""}</span>)}</div>
+      </div>
+
+      <div style={{ display: "flex", marginBottom: 12, borderRadius: 7, overflow: "hidden", border: "1px solid #2d2a3e" }}>
+        {[{ id: "search", l: "Buscar" }, { id: "compare", l: "Comparar" }, { id: "saved", l: `Salvos (${saved.length})` }].map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{ flex: 1, padding: "8px 0", fontSize: 10, fontWeight: 600, border: "none", background: tab === t.id ? "#1e1b3a" : "#0c0a1a", color: tab === t.id ? "#818cf8" : "#64748b", cursor: "pointer" }}>{t.l}</button>
+        ))}
+      </div>
+
+      {tab === "search" && <>
+        {/* Inputs */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 8 }}>
+          <div>
+            <label style={S.label}>Origem</label>
+            <select value={origin} onChange={e => setOrigin(e.target.value)} style={S.input}>
+              <optgroup label="Brasil">{ORIGINS.map(o => <option key={o.code} value={o.code}>{o.code} — {o.city.split("(")[0].trim()}</option>)}</optgroup>
+              <optgroup label="Internacionais (volta)">{DESTS.map(d => <option key={d.code} value={d.code}>{d.flag} {d.code} — {d.city}</option>)}</optgroup>
+            </select>
+          </div>
+          <div>
+            <label style={S.label}>Destino</label>
+            <select value={destCode} onChange={e => { setDestCode(e.target.value); setRes(null); setSelDate(null); }} style={{ ...S.input, color: destCode ? "#e2e8f0" : "#64748b" }}>
+              <option value="">Selecione...</option>
+              {regions.map(r => (<optgroup key={r} label={r}>{DESTS.filter(d => d.region === r).map(d => <option key={d.code} value={d.code}>{d.flag} {d.city} ({d.code})</option>)}</optgroup>))}
+            </select>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 8 }}>
+          <div><label style={S.label}>Classe</label><select value={cabin} onChange={e => setCabin(e.target.value)} style={S.input}>{CABINS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></div>
+          <div>
+            <label style={S.label}>Passageiros</label>
+            <div style={{ display: "flex", borderRadius: 6, overflow: "hidden", border: "1.5px solid #2d2a3e" }}>
+              {[1, 2, 3, 4].map(p => <button key={p} onClick={() => setPax(p)} style={{ flex: 1, padding: "7px 0", fontSize: 11, fontWeight: 600, border: "none", background: pax === p ? "#1e1b3a" : "#0c0a1a", color: pax === p ? "#818cf8" : "#64748b", cursor: "pointer" }}>{p}</button>)}
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 5, marginBottom: 8 }}>
+          <div><label style={S.label}>Data alvo</label><input type="date" value={targetDate} onChange={e => setTargetDate(e.target.value)} style={S.input} /></div>
+          <div><label style={S.label}>Flexibilidade</label><select value={range} onChange={e => setRange(Number(e.target.value))} style={S.input}><option value={0}>Exato</option><option value={2}>±2 dias</option><option value={5}>±5 dias</option><option value={10}>±10 dias</option><option value={15}>±15 dias</option></select></div>
+          <div><label style={S.label}>Bônus iupp</label><select value={bonus} onChange={e => setBonus(Number(e.target.value))} style={S.input}>{[0, 50, 80, 100].map(b => <option key={b} value={b}>{b === 0 ? "Sem" : `${b}%`}</option>)}</select></div>
+        </div>
+
+        {range > 0 && <div style={{ fontSize: 9, color: "#64748b", marginBottom: 8, textAlign: "center" }}>{new Date(df + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} a {new Date(dt + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ({range * 2} dias)</div>}
+
+        {/* Real data status badge */}
+        {destCode && realDataMeta && (
+          <div style={{ padding: 8, borderRadius: 6, marginBottom: 10, fontSize: 10, background: realDataMeta.loaded ? "#052e1680" : "#1e1b3a", border: `1px solid ${realDataMeta.loaded ? "#166534" : "#2d2a3e"}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>{realDataMeta.loaded ? `✅ Dados reais disponíveis (${new Date(realDataMeta.searchedAt).toLocaleDateString("pt-BR")})` : "📊 Sem dados reais — usando estimativa"}</span>
+            {!realDataMeta.loaded && dest && (
+              <button onClick={copyCoworkCommand} style={{ padding: "3px 8px", borderRadius: 4, border: "1px solid #4f46e5", background: copied ? "#052e16" : "#1e1b3a", color: copied ? "#4ade80" : "#818cf8", fontSize: 9, fontWeight: 600, cursor: "pointer" }}>
+                {copied ? "Copiado!" : "Copiar comando Cowork"}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Cowork command preview */}
+        {destCode && !realDataMeta?.loaded && dest && (
+          <details style={{ marginBottom: 12 }}>
+            <summary style={{ fontSize: 10, color: "#64748b", cursor: "pointer", marginBottom: 4 }}>Ver comando para Cowork</summary>
+            <div style={{ padding: 10, borderRadius: 6, background: "#0c0a1a", border: "1px solid #2d2a3e", fontSize: 10, ...S.mono, color: "#94a3b8", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{coworkCommand}</div>
+          </details>
+        )}
+
+        <button onClick={doSearch} disabled={!dest || searching} style={{
+          width: "100%", padding: 12, borderRadius: 8, border: "none",
+          background: dest ? "linear-gradient(135deg, #4f46e5, #7c3aed)" : "#2d2a3e",
+          color: dest ? "#fff" : "#64748b", fontSize: 13, fontWeight: 700,
+          cursor: dest ? "pointer" : "not-allowed", marginBottom: 14, opacity: searching ? 0.6 : 1,
+        }}>{searching ? "Carregando..." : realDataMeta?.loaded ? "Ver Disponibilidade Real" : "Estimativa de Disponibilidade"}</button>
+
+        {/* Calendar */}
+        {res && <>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 600 }}>{hasRealResults ? "Disponibilidade Real + Estimativa" : "Estimativa por data"}</span>
+            <span style={{ fontSize: 9, color: "#64748b" }}>Toque para detalhes</span>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 6, fontSize: 8, color: "#94a3b8" }}>
+            <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: "#052e16", border: "1px solid #166534", marginRight: 2, verticalAlign: "middle" }} />Alta</span>
+            <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: "#422006", border: "1px solid #854d0e", marginRight: 2, verticalAlign: "middle" }} />Média</span>
+            <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: "#1e1b3a", border: "1px solid #3730a3", marginRight: 2, verticalAlign: "middle" }} />Baixa</span>
+            {hasRealResults && <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: "#1e1b3a", border: "1.5px solid #22d3ee", marginRight: 2, verticalAlign: "middle" }} />Real</span>}
+            <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, border: "1.5px solid #c084fc", marginRight: 2, verticalAlign: "middle" }} />Alvo</span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
+            {res.map(r => {
+              const isTarget = r.ds === targetDate, bl = r.bestLikelihood, isReal = r.source === "real" || r.source === "calendar";
+              let bg = "#1e1b3a", bd = "#3730a3";
+              if (bl >= 55) { bg = "#052e16"; bd = "#166534"; } else if (bl >= 35) { bg = "#422006"; bd = "#854d0e"; }
+              if (selDate === r.ds) bd = "#e2e8f0"; else if (isTarget) bd = "#c084fc"; else if (isReal) bd = "#22d3ee";
+              return (
+                <button key={r.ds} onClick={() => setSelDate(r.ds)} style={{
+                  width: 34, height: 34, borderRadius: 5, fontSize: 10, fontWeight: 500,
+                  background: bg, border: `1.5px solid ${bd}`, color: "#e2e8f0",
+                  cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                  boxShadow: isReal ? "0 0 4px #22d3ee30" : "none",
+                }}>
+                  <span style={{ fontSize: 8, opacity: 0.5 }}>{r.date.toLocaleDateString("pt-BR", { weekday: "narrow" })}</span>
+                  <span>{r.date.getDate()}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Date detail */}
+          {selDate && (() => {
+            const r = res.find(x => x.ds === selDate);
+            if (!r) return null;
+            const opts = getOptions(dest);
+            return (
+              <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: "#1e1b3a", border: `1px solid ${(r.source === "real" || r.source === "calendar") ? "#22d3ee40" : "#2d2a3e"}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>{new Date(r.ds + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" })}</span>
+                  {r.source === "real" && <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 6px", borderRadius: 3, background: "#083344", color: "#22d3ee", border: "1px solid #155e75" }}>VOOS CONFIRMADOS</span>}
+                  {r.source === "calendar" && <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 6px", borderRadius: 3, background: "#422006", color: "#fbbf24", border: "1px solid #854d0e" }}>TEM VOOS</span>}
+                </div>
+                {r.calendarFare && <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 8 }}>Menor tarifa paga: <strong style={{ color: "#e2e8f0" }}>{r.calendarFare}</strong> (referência)</div>}
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {r.partners.map((p, pi) => {
+                    const prog = PROGRAMS[p.program];
+                    const opt = opts.find(o => o.partner === p.partner);
+                    const milesLeg = opt?.miles;
+                    const milesRt = milesLeg ? milesLeg * 2 * pax : null;
+                    const iupp = milesRt ? iuppCost(milesRt, bonus) : null;
+                    const route = p.route ? p.route.replace("{O}", origin) : "";
+                    const lk = p.likelihood;
+                    const lkColor = lk >= 55 ? "#4ade80" : lk >= 35 ? "#fbbf24" : "#f87171";
+                    const lkLabel = p.realStatus === "confirmed" ? "Confirmado" : p.realStatus === "unavailable" ? "Indisponível" : lk >= 55 ? "Alta" : lk >= 35 ? "Média" : "Baixa";
+
+                    return (
+                      <div key={pi} style={{ padding: 10, borderRadius: 8, background: "#12102a", border: `1px solid ${p.realStatus === "confirmed" ? "#155e75" : "#2d2a3e"}` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                            <Pill program={p.program} />
+                            <span style={{ fontSize: 11, fontWeight: 600, color: "#c7d2fe" }}>{p.partner}</span>
+                          </div>
+                          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                            {opt?.bestPick && <span style={{ fontSize: 7, fontWeight: 700, padding: "0 4px", borderRadius: 3, background: "#052e16", color: "#4ade80", border: "1px solid #166534" }}>MELHOR</span>}
+                            {p.realStatus === "confirmed" && <span style={{ fontSize: 7, fontWeight: 700, padding: "0 4px", borderRadius: 3, background: "#083344", color: "#22d3ee", border: "1px solid #155e75" }}>REAL</span>}
+                          </div>
+                        </div>
+
+                        {route && <div style={{ fontSize: 9, color: "#64748b", marginBottom: 5 }}>{route}</div>}
+
+                        {/* Real flight details */}
+                        {p.realFlight && (
+                          <div style={{ padding: 6, borderRadius: 5, background: "#08334420", border: "1px solid #155e7540", marginBottom: 6, fontSize: 9, color: "#94a3b8", lineHeight: 1.6 }}>
+                            {p.realFlight.flight && <span style={{ fontWeight: 600, color: "#22d3ee" }}>{p.realFlight.flight}</span>}
+                            {p.realFlight.departure && <span> · {p.realFlight.departure}→{p.realFlight.arrival}</span>}
+                            {p.realFlight.duration && <span> · {p.realFlight.duration}</span>}
+                            {p.realFlight.via && <span> · via {p.realFlight.via}</span>}
+                            {p.realFlight.avios && <span> · {fmt(p.realFlight.avios)} Avios</span>}
+                            {p.realFlight.pricePaid && !p.realFlight.isAward && <span> · Tarifa paga: {p.realFlight.pricePaid}</span>}
+                            {p.realFlight.seats_2pax !== undefined && <div style={{ marginTop: 2 }}>{p.realFlight.seats_2pax ? `✅ Executiva disponível para ${pax}+ pax` : p.realFlight.seats_1pax ? "⚠️ Executiva pode não estar disponível em todos os trechos" : "❌ Executiva indisponível"}</div>}
+                          </div>
+                        )}
+
+                        {/* Likelihood bar */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                          <div style={{ flex: 1, height: 4, borderRadius: 2, background: "#2d2a3e", overflow: "hidden" }}>
+                            <div style={{ width: `${lk}%`, height: "100%", borderRadius: 2, background: lkColor }} />
+                          </div>
+                          <span style={{ fontSize: 9, fontWeight: 600, color: lkColor, minWidth: 55 }}>{lkLabel} {!p.realStatus?.includes("confirm") ? `${lk}%` : ""}</span>
+                        </div>
+
+                        {/* Cost */}
+                        {milesRt ? (
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, marginBottom: 8 }}>
+                            <div><div style={{ fontSize: 8, color: "#64748b", textTransform: "uppercase" }}>Milhas i/v {pax}pax</div><div style={{ fontSize: 14, fontWeight: 700, ...S.mono }}>{fmt(milesRt)}</div></div>
+                            <div><div style={{ fontSize: 8, color: "#64748b", textTransform: "uppercase" }}>Pontos iupp ({bonus}%)</div><div style={{ fontSize: 14, fontWeight: 700, ...S.mono, color: "#818cf8" }}>{fmt(iupp)}</div></div>
+                          </div>
+                        ) : <div style={{ fontSize: 10, color: "#fbbf24", fontStyle: "italic", marginBottom: 8 }}>Preço dinâmico — verificar no site</div>}
+
+                        {(p.surcharge || p.note) && <div style={{ display: "flex", gap: 3, marginBottom: 6, flexWrap: "wrap" }}>
+                          {p.surcharge && <span style={{ fontSize: 8, padding: "1px 5px", borderRadius: 3, background: p.surcharge.includes("ALTO") ? "#7f1d1d" : "#1e1b3a", color: p.surcharge.includes("ALTO") ? "#fca5a5" : "#94a3b8" }}>{p.surcharge}</span>}
+                          {p.note && <span style={{ fontSize: 8, padding: "1px 5px", borderRadius: 3, background: "#1e1b3a", color: "#94a3b8" }}>{p.note}</span>}
+                        </div>}
+
+                        <a href={buildSearchUrl(p.search, origin, destCode, r.ds, cabin, pax)} target="_blank" rel="noopener noreferrer" style={{
+                          display: "block", padding: "6px 0", borderRadius: 5, textAlign: "center",
+                          background: prog.color, color: "#fff", fontSize: 10, fontWeight: 600, textDecoration: "none",
+                        }}>Verificar no {p.search} →</a>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button onClick={() => setSaved(p => [...p, { dest, origin, date: selDate, cabin, pax, bonus, id: Date.now() }])} style={{
+                  width: "100%", padding: "8px 10px", borderRadius: 6, border: "1px solid #2d2a3e",
+                  background: "#12102a", color: "#818cf8", fontSize: 10, fontWeight: 600, cursor: "pointer", marginTop: 10,
+                }}>💾 Salvar esta data</button>
+              </div>
+            );
+          })()}
+        </>}
+      </>}
+
+      {/* Compare tab */}
+      {tab === "compare" && <div>
+        <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4, color: "#c7d2fe" }}>{cabinLabel} · i/v {pax}pax · Bônus {bonus}%</div>
+        <div style={{ display: "flex", gap: 3, marginBottom: 10, flexWrap: "wrap" }}>
+          <button onClick={() => setRegionFilter("")} style={{ padding: "3px 7px", borderRadius: 3, fontSize: 8, fontWeight: 600, border: "1px solid #2d2a3e", background: !regionFilter ? "#1e1b3a" : "#0c0a1a", color: !regionFilter ? "#e2e8f0" : "#64748b", cursor: "pointer" }}>Todos</button>
+          {regions.map(r => <button key={r} onClick={() => setRegionFilter(regionFilter === r ? "" : r)} style={{ padding: "3px 7px", borderRadius: 3, fontSize: 8, fontWeight: 600, border: `1px solid ${regionFilter === r ? (REGION_COLORS[r]||"#818cf8") + "60" : "#2d2a3e"}`, background: regionFilter === r ? (REGION_COLORS[r]||"#818cf8") + "15" : "#0c0a1a", color: regionFilter === r ? REGION_COLORS[r] : "#64748b", cursor: "pointer" }}>{r}</button>)}
+        </div>
+        {(regionFilter ? DESTS.filter(d => d.region === regionFilter) : DESTS)
+          .map(d => { const o = getOptions(d).filter(x => x.miles); return o[0] ? { d, best: o[0] } : null; }).filter(Boolean)
+          .sort((a, b) => iuppCost(a.best.miles * 2 * pax, bonus) - iuppCost(b.best.miles * 2 * pax, bonus))
+          .map(({ d, best }) => {
+            const cost = iuppCost(best.miles * 2 * pax, bonus);
+            return (
+              <div key={d.code} onClick={() => { setDestCode(d.code); setTab("search"); setRes(null); }} style={{ ...S.card, marginBottom: 5, cursor: "pointer" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>{d.flag} {d.city}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5 }}><Pill program={best.program} tiny /><span style={{ fontSize: 12, fontWeight: 700, ...S.mono, color: "#818cf8" }}>{fmt(cost)} pts</span></div>
+                </div>
+                <div style={{ fontSize: 8, color: "#64748b" }}>{best.partner} · {fmt(best.miles * 2 * pax)} milhas</div>
+              </div>
+            );
+          })}
+      </div>}
+
+      {/* Saved tab */}
+      {tab === "saved" && <div>
+        {saved.length === 0 ? <div style={{ textAlign: "center", padding: 32, color: "#64748b", fontSize: 11 }}>Nenhuma busca salva.</div>
+        : saved.map(s => (
+          <div key={s.id} style={{ ...S.card, marginBottom: 5 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+              <span style={{ fontSize: 12, fontWeight: 700 }}>{s.dest.flag} {s.origin}→{s.dest.city}</span>
+              <span style={{ fontSize: 10, color: "#94a3b8" }}>{new Date(s.date + "T12:00:00").toLocaleDateString("pt-BR")}</span>
+            </div>
+            <div style={{ fontSize: 9, color: "#94a3b8", marginBottom: 6 }}>{CABINS.find(c => c.id === s.cabin)?.label} · {s.pax}pax · Bônus {s.bonus}%</div>
+            <div style={{ display: "flex", gap: 4 }}>
+              {["aa.com", "smiles.com.br", "flytap.com"].map(site => {
+                const url = buildSearchUrl(site, s.origin, s.dest.code, s.date, s.cabin, s.pax);
+                const c = { "aa.com": "#e11d48", "smiles.com.br": "#f97316", "flytap.com": "#059669" };
+                const l = { "aa.com": "AA", "smiles.com.br": "Smiles", "flytap.com": "TAP" };
+                return <a key={site} href={url} target="_blank" rel="noopener noreferrer" style={{ flex: 1, padding: 6, borderRadius: 5, background: c[site], color: "#fff", fontSize: 9, fontWeight: 600, textAlign: "center", textDecoration: "none" }}>{l[site]}</a>;
+              })}
+              <button onClick={() => setSaved(p => p.filter(x => x.id !== s.id))} style={{ padding: "6px 8px", borderRadius: 5, border: "1px solid #2d2a3e", background: "#12102a", color: "#f87171", fontSize: 9, cursor: "pointer" }}>✕</button>
+            </div>
+          </div>
+        ))}
+      </div>}
+
+      <div style={{ textAlign: "center", marginTop: 16, fontSize: 8, color: "#475569", lineHeight: 1.5 }}>
+        {hasRealResults ? "Dados reais via Cowork + estimativas complementares" : "Estimativas baseadas em padrões históricos"} · Confirme no site antes de transferir
+      </div>
+    </div>
+  );
+}
+
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
