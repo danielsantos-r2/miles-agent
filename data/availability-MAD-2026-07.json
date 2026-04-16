@@ -1,0 +1,341 @@
+{
+  "searchQuery": {
+    "origin": "GRU",
+    "destination": "MAD",
+    "cabin": "Business",
+    "passengers": 2,
+    "departDate": "2026-07-17",
+    "returnDate": "2026-07-27",
+    "searchDate": "2026-04-16"
+  },
+  "results": {
+    "aa.com": {
+      "status": "partial",
+      "note": "Award travel requires AAdvantage login. Results show Business/First paid fare availability with Flagship Business indicators.",
+      "outboundDate": "2026-07-17",
+      "origin": "GRU",
+      "destination": "MAD",
+      "totalFlights": 19,
+      "flights": [
+        {
+          "departure": "22:30",
+          "arrival": "05:35+2",
+          "duration": "26h 5m",
+          "stops": 1,
+          "via": "JFK",
+          "segments": [
+            {
+              "flight": "AA 950",
+              "aircraft": "B787",
+              "from": "GRU",
+              "to": "JFK"
+            },
+            {
+              "flight": "AA 94",
+              "aircraft": "B772",
+              "from": "JFK",
+              "to": "MAD"
+            }
+          ],
+          "businessAvailable": true,
+          "flagshipBusiness": true,
+          "pricePaid": "$12,397"
+        },
+        {
+          "departure": "22:30",
+          "arrival": "06:30+2",
+          "duration": "27h 0m",
+          "stops": 1,
+          "via": "JFK",
+          "segments": [
+            {
+              "flight": "AA 950",
+              "aircraft": "B787",
+              "from": "GRU",
+              "to": "JFK"
+            },
+            {
+              "flight": "AA 8566",
+              "aircraft": "A321neo",
+              "operator": "Iberia",
+              "from": "JFK",
+              "to": "MAD"
+            }
+          ],
+          "businessAvailable": true,
+          "flagshipBusiness": false,
+          "pricePaid": "$12,397"
+        },
+        {
+          "departure": "23:15",
+          "arrival": "07:45+2",
+          "duration": "27h 30m",
+          "stops": 1,
+          "via": "MIA",
+          "segments": [
+            {
+              "flight": "AA 906",
+              "aircraft": "B787",
+              "from": "GRU",
+              "to": "MIA"
+            },
+            {
+              "flight": "AA 8741",
+              "aircraft": "A330",
+              "operator": "Iberia",
+              "from": "MIA",
+              "to": "MAD"
+            }
+          ],
+          "businessAvailable": true,
+          "flagshipBusiness": false,
+          "pricePaid": "$12,397"
+        },
+        {
+          "departure": "21:25",
+          "arrival": "07:45+2",
+          "duration": "29h 20m",
+          "stops": 1,
+          "via": "MIA",
+          "segments": [
+            {
+              "flight": "AA 930",
+              "aircraft": "B777",
+              "from": "GRU",
+              "to": "MIA"
+            },
+            {
+              "flight": "AA 8741",
+              "aircraft": "A330",
+              "operator": "Iberia",
+              "from": "MIA",
+              "to": "MAD"
+            }
+          ],
+          "businessAvailable": false,
+          "businessNote": "Class may not be available on one or more flights",
+          "pricePaid": "$12,444"
+        },
+        {
+          "departure": "23:15",
+          "arrival": "09:35+2",
+          "duration": "29h 20m",
+          "stops": 1,
+          "via": "MIA",
+          "segments": [
+            {
+              "flight": "AA 906",
+              "aircraft": "B787",
+              "from": "GRU",
+              "to": "MIA"
+            },
+            {
+              "flight": "AA 68",
+              "aircraft": "B772",
+              "from": "MIA",
+              "to": "MAD"
+            }
+          ],
+          "businessAvailable": true,
+          "flagshipBusiness": true,
+          "pricePaid": "$12,444"
+        },
+        {
+          "departure": "22:00",
+          "arrival": "09:05+2",
+          "duration": "30h 5m",
+          "stops": 1,
+          "via": "DFW",
+          "segments": [
+            {
+              "flight": "AA 962",
+              "aircraft": "B787",
+              "from": "GRU",
+              "to": "DFW"
+            },
+            {
+              "flight": "AA 36",
+              "aircraft": "B772",
+              "from": "DFW",
+              "to": "MAD"
+            }
+          ],
+          "businessAvailable": true,
+          "flagshipBusiness": true,
+          "pricePaid": "$12,397"
+        },
+        {
+          "departure": "22:30",
+          "arrival": "10:15+2",
+          "duration": "30h 45m",
+          "stops": 1,
+          "via": "JFK",
+          "segments": [
+            {
+              "flight": "AA 950",
+              "aircraft": "B787",
+              "from": "GRU",
+              "to": "JFK"
+            },
+            {
+              "flight": "AA 8567",
+              "aircraft": "A350",
+              "operator": "Iberia",
+              "from": "JFK",
+              "to": "MAD"
+            }
+          ],
+          "businessAvailable": true,
+          "flagshipBusiness": false,
+          "pricePaid": "$12,444"
+        },
+        {
+          "departure": "21:25",
+          "arrival": "09:35+2",
+          "duration": "31h 10m",
+          "stops": 1,
+          "via": "MIA",
+          "segments": [
+            {
+              "flight": "AA 930",
+              "aircraft": "B777",
+              "from": "GRU",
+              "to": "MIA"
+            },
+            {
+              "flight": "AA 68",
+              "aircraft": "B772",
+              "from": "MIA",
+              "to": "MAD"
+            }
+          ],
+          "businessAvailable": false,
+          "flagshipBusiness": true,
+          "businessNote": "Class may not be available on one or more flights",
+          "pricePaid": "$12,444"
+        },
+        {
+          "departure": "23:15",
+          "arrival": "12:50+2",
+          "duration": "32h 35m",
+          "stops": 1,
+          "via": "MIA",
+          "segments": [
+            {
+              "flight": "AA 906",
+              "aircraft": "B787",
+              "from": "GRU",
+              "to": "MIA"
+            },
+            {
+              "flight": "AA 8740",
+              "aircraft": "A330",
+              "operator": "Iberia",
+              "from": "MIA",
+              "to": "MAD"
+            }
+          ],
+          "businessAvailable": true,
+          "flagshipBusiness": false,
+          "pricePaid": "$12,444"
+        },
+        {
+          "departure": "22:30",
+          "arrival": "13:20+2",
+          "duration": "33h 50m",
+          "stops": 1,
+          "via": "JFK/EWR",
+          "connecting_airports_different": true,
+          "segments": [
+            {
+              "flight": "AA 950",
+              "aircraft": "B787",
+              "from": "GRU",
+              "to": "JFK"
+            },
+            {
+              "flight": "AA 8852",
+              "aircraft": "A321neo",
+              "operator": "Iberia",
+              "from": "EWR",
+              "to": "MAD"
+            }
+          ],
+          "businessAvailable": true,
+          "flagshipBusiness": false,
+          "pricePaid": "$12,871"
+        },
+        {
+          "departure": "21:25",
+          "arrival": "12:50+2",
+          "duration": "34h 25m",
+          "stops": 1,
+          "via": "MIA",
+          "segments": [
+            {
+              "flight": "AA 930",
+              "aircraft": "B777",
+              "from": "GRU",
+              "to": "MIA"
+            },
+            {
+              "flight": "AA 8740",
+              "aircraft": "A330",
+              "operator": "Iberia",
+              "from": "MIA",
+              "to": "MAD"
+            }
+          ],
+          "businessAvailable": false,
+          "businessNote": "Class may not be available on one or more flights",
+          "pricePaid": "$12,444"
+        },
+        {
+          "departure": "22:00",
+          "arrival": "14:25+2",
+          "duration": "35h 25m",
+          "stops": 1,
+          "via": "DFW",
+          "segments": [
+            {
+              "flight": "AA 962",
+              "aircraft": "B787",
+              "from": "GRU",
+              "to": "DFW"
+            },
+            {
+              "flight": "AA 8631",
+              "aircraft": "A330",
+              "operator": "Iberia",
+              "from": "DFW",
+              "to": "MAD"
+            }
+          ],
+          "businessAvailable": true,
+          "flagshipBusiness": false,
+          "pricePaid": "$12,444"
+        }
+      ],
+      "calendarLowestFares": {
+        "2026-07-11": "$8,649",
+        "2026-07-12": "$8,649",
+        "2026-07-13": "$12,397",
+        "2026-07-14": "$12,397",
+        "2026-07-15": "$12,397",
+        "2026-07-16": "$12,397",
+        "2026-07-17": "$9,196",
+        "2026-07-18": "$12,397",
+        "2026-07-19": "$8,649",
+        "2026-07-20": "$7,603",
+        "2026-07-21": "$7,014",
+        "2026-07-22": "$7,603",
+        "2026-07-23": "$7,603"
+      }
+    },
+    "ba.com": {
+      "status": "error",
+      "error": "ba.com redirects to britishairways.com which is not in the approved domain list. BA also requires Executive Club login for award flight search.",
+      "redirectTarget": "britishairways.com"
+    }
+  }
+}
