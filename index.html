@@ -208,29 +208,115 @@ function estimateAvail(destObj, from, to) {
   return r;
 }
 
-// ── Merge real data into estimates ────────────────────────────────────────
-function mergeRealData(estimates, realData) {
-  if (!realData?.results) return estimates;
-  const realMap = {};
-  for (const r of realData.results) {
-    realMap[r.date] = r.flights || [];
+// ── Normalize Cowork JSON to internal format ──────────────────────────────
+function normalizeCoworkData(raw) {
+  // Format 1: expected format { search: {}, results: [{ date, flights }] }
+  if (Array.isArray(raw?.results)) return raw;
+
+  // Format 2: Cowork actual output { searchQuery: {}, results: { "aa.com": { flights }, "ba.com": {} } }
+  const sq = raw?.searchQuery || raw?.search || {};
+  const searchedAt = sq.searchDate || sq.searched_at || new Date().toISOString().split("T")[0];
+  const allFlights = [];
+
+  // Collect flights from all sites
+  for (const [site, siteData] of Object.entries(raw?.results || {})) {
+    if (!siteData?.flights) continue;
+    for (const f of siteData.flights) {
+      // Extract operator — check segments for codeshare operator
+      let airline = "Unknown";
+      if (f.segments) {
+        const opSeg = f.segments.find(s => s.operator) || f.segments[0];
+        airline = opSeg?.operator || (opSeg?.flight?.startsWith("IB") ? "Iberia" : opSeg?.flight?.startsWith("AA") ? "American Airlines" : opSeg?.flight?.startsWith("BA") ? "British Airways" : opSeg?.flight?.startsWith("QR") ? "Qatar" : "AA");
+      }
+      allFlights.push({
+        source: site,
+        airline,
+        flight: f.segments?.map(s => s.flight).join(" + ") || "",
+        departure: f.departure || "",
+        arrival: f.arrival || "",
+        duration: f.duration || "",
+        stops: f.stops || 0,
+        via: f.via || "",
+        avios: f.avios || f.miles_aa || null,
+        seats_1pax: f.businessAvailable !== false,
+        seats_2pax: f.businessAvailable === true, // conservative: if available, assume at least for search pax
+        pricePaid: f.pricePaid || null,
+        isAward: !!f.avios || !!f.miles_aa,
+      });
+    }
   }
+
+  // Build date-based results
+  const dateStr = sq.departDate || sq.date || "";
+  const calFares = {};
+  for (const [site, siteData] of Object.entries(raw?.results || {})) {
+    if (siteData?.calendarLowestFares) Object.assign(calFares, siteData.calendarLowestFares);
+  }
+
+  const results = [];
+  // Main search date
+  if (dateStr && allFlights.length > 0) {
+    results.push({ date: dateStr, flights: allFlights });
+  }
+  // Calendar dates (even if just fare data, useful for showing which dates have flights)
+  for (const [d, fare] of Object.entries(calFares)) {
+    if (d === dateStr) continue; // already added
+    results.push({ date: d, flights: [], calendarFare: fare, hasFlights: true });
+  }
+
+  return {
+    search: { searched_at: searchedAt, origin: sq.origin, destination: sq.destination, cabin: sq.cabin, pax: sq.passengers },
+    results,
+    calendarFares: calFares,
+    _normalized: true,
+  };
+}
+
+function mergeRealData(estimates, realData) {
+  const norm = normalizeCoworkData(realData);
+  if (!norm?.results?.length) return estimates;
+
+  const realMap = {};
+  for (const r of norm.results) { realMap[r.date] = r; }
+  const calFares = norm.calendarFares || {};
+
   return estimates.map(est => {
     const real = realMap[est.ds];
-    if (!real) return est;
-    if (real.length === 0) return { ...est, source: "real", bestLikelihood: 0, partners: est.partners.map(p => ({ ...p, likelihood: 0, realStatus: "unavailable" })) };
-    // Merge real flight data into partner estimates
-    const newPartners = est.partners.map(p => {
-      const matching = real.filter(f => f.airline && p.partner.toLowerCase().includes(f.airline.toLowerCase()));
-      if (matching.length > 0) {
-        const f = matching[0];
-        return { ...p, likelihood: f.seats_2pax ? 95 : f.seats_1pax ? 60 : 5, realStatus: "confirmed", realFlight: f };
-      }
-      // Check if any real flight matches this partner
-      return { ...p, realStatus: "not_found" };
-    });
-    const bestLk = Math.max(...newPartners.map(p => p.likelihood));
-    return { ...est, partners: newPartners, bestLikelihood: bestLk, source: "real" };
+    const fare = calFares[est.ds];
+
+    // If we have calendar fare data, this date has flights (even if no award detail)
+    if (!real && !fare) return est;
+
+    if (real && real.flights?.length > 0) {
+      const newPartners = est.partners.map(p => {
+        // Match by checking if any flight's airline matches the partner name
+        const matching = real.flights.filter(f => {
+          const pa = p.partner.toLowerCase();
+          const fa = (f.airline || "").toLowerCase();
+          return pa.includes(fa) || fa.includes(pa.split("/")[0].split("+")[0].trim());
+        });
+        if (matching.length > 0) {
+          const f = matching[0];
+          return { ...p, likelihood: f.seats_2pax ? 85 : f.seats_1pax ? 55 : 10, realStatus: "confirmed", realFlight: f };
+        }
+        // Check if any flight has Iberia as operator in segments
+        const iberiaMatch = real.flights.filter(f => f.airline === "Iberia" && p.partner.includes("Iberia"));
+        if (iberiaMatch.length > 0) {
+          const f = iberiaMatch[0];
+          return { ...p, likelihood: f.seats_2pax ? 85 : f.seats_1pax ? 55 : 10, realStatus: "confirmed", realFlight: f };
+        }
+        return { ...p, realStatus: "not_found" };
+      });
+      const bestLk = Math.max(...newPartners.map(p => p.likelihood));
+      return { ...est, partners: newPartners, bestLikelihood: bestLk, source: "real" };
+    }
+
+    // Calendar fare only — we know flights exist but no award detail
+    if (fare) {
+      return { ...est, source: "calendar", calendarFare: fare, bestLikelihood: Math.max(est.bestLikelihood, 40) };
+    }
+
+    return est;
   });
 }
 
@@ -266,10 +352,14 @@ function App() {
   // Try to load real data from GitHub when dest changes
   useEffect(() => {
     if (!destCode) { setRealData(null); setRealDataMeta(null); return; }
-    const month = targetDate.substring(0, 7); // 2026-07
-    const url = `${GITHUB_DATA_BASE}/availability-${destCode}-${month.replace("-", "-")}.json`;
+    const month = targetDate.substring(0, 7);
+    const url = `${GITHUB_DATA_BASE}/availability-${destCode}-${month}.json`;
     fetch(url).then(r => { if (r.ok) return r.json(); throw new Error("not found"); })
-      .then(data => { setRealData(data); setRealDataMeta({ loaded: true, searchedAt: data.search?.searched_at, url }); })
+      .then(data => {
+        const searchedAt = data.search?.searched_at || data.searchQuery?.searchDate || "desconhecido";
+        setRealData(data);
+        setRealDataMeta({ loaded: true, searchedAt, url });
+      })
       .catch(() => { setRealData(null); setRealDataMeta({ loaded: false }); });
   }, [destCode, targetDate]);
 
@@ -308,7 +398,7 @@ function App() {
     mono: { fontFamily: "'Space Mono', monospace" },
   };
 
-  const hasRealResults = res?.some(r => r.source === "real");
+  const hasRealResults = res?.some(r => r.source === "real" || r.source === "calendar");
 
   return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(155deg, #0c0a1a 0%, #11102a 40%, #090818 100%)", color: "#e2e8f0", fontFamily: "'DM Sans', sans-serif", padding: "14px 12px" }}>
@@ -403,7 +493,7 @@ function App() {
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
             {res.map(r => {
-              const isTarget = r.ds === targetDate, bl = r.bestLikelihood, isReal = r.source === "real";
+              const isTarget = r.ds === targetDate, bl = r.bestLikelihood, isReal = r.source === "real" || r.source === "calendar";
               let bg = "#1e1b3a", bd = "#3730a3";
               if (bl >= 55) { bg = "#052e16"; bd = "#166534"; } else if (bl >= 35) { bg = "#422006"; bd = "#854d0e"; }
               if (selDate === r.ds) bd = "#e2e8f0"; else if (isTarget) bd = "#c084fc"; else if (isReal) bd = "#22d3ee";
@@ -427,10 +517,13 @@ function App() {
             if (!r) return null;
             const opts = getOptions(dest);
             return (
-              <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: "#1e1b3a", border: `1px solid ${r.source === "real" ? "#22d3ee40" : "#2d2a3e"}` }}>
+              <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: "#1e1b3a", border: `1px solid ${(r.source === "real" || r.source === "calendar") ? "#22d3ee40" : "#2d2a3e"}` }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                   <span style={{ fontSize: 13, fontWeight: 700 }}>{new Date(r.ds + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" })}</span>
-                  {r.source === "real" && <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 6px", borderRadius: 3, background: "#083344", color: "#22d3ee", border: "1px solid #155e75" }}>DADO REAL</span>}
+                  {r.source === "real" && <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 6px", borderRadius: 3, background: "#083344", color: "#22d3ee", border: "1px solid #155e75" }}>VOOS CONFIRMADOS</span>}
+                  {r.source === "calendar" && <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 6px", borderRadius: 3, background: "#422006", color: "#fbbf24", border: "1px solid #854d0e" }}>TEM VOOS</span>}
+                </div>
+                {r.calendarFare && <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 8 }}>Menor tarifa paga: <strong style={{ color: "#e2e8f0" }}>{r.calendarFare}</strong> (referência)</div>}
                 </div>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -462,11 +555,14 @@ function App() {
 
                         {/* Real flight details */}
                         {p.realFlight && (
-                          <div style={{ padding: 6, borderRadius: 5, background: "#08334420", border: "1px solid #155e7540", marginBottom: 6, fontSize: 9, color: "#94a3b8" }}>
+                          <div style={{ padding: 6, borderRadius: 5, background: "#08334420", border: "1px solid #155e7540", marginBottom: 6, fontSize: 9, color: "#94a3b8", lineHeight: 1.6 }}>
                             {p.realFlight.flight && <span style={{ fontWeight: 600, color: "#22d3ee" }}>{p.realFlight.flight}</span>}
                             {p.realFlight.departure && <span> · {p.realFlight.departure}→{p.realFlight.arrival}</span>}
+                            {p.realFlight.duration && <span> · {p.realFlight.duration}</span>}
+                            {p.realFlight.via && <span> · via {p.realFlight.via}</span>}
                             {p.realFlight.avios && <span> · {fmt(p.realFlight.avios)} Avios</span>}
-                            {p.realFlight.seats_2pax !== undefined && <span> · {p.realFlight.seats_2pax ? `${pax}+ assentos` : "1 assento apenas"}</span>}
+                            {p.realFlight.pricePaid && !p.realFlight.isAward && <span> · Tarifa paga: {p.realFlight.pricePaid}</span>}
+                            {p.realFlight.seats_2pax !== undefined && <div style={{ marginTop: 2 }}>{p.realFlight.seats_2pax ? `✅ Executiva disponível para ${pax}+ pax` : p.realFlight.seats_1pax ? "⚠️ Executiva pode não estar disponível em todos os trechos" : "❌ Executiva indisponível"}</div>}
                           </div>
                         )}
 
